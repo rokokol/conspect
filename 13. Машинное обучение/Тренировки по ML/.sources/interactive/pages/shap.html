@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница значений Шепли</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; min-width: 0; }
+.plots > * { min-width: 0; }
+.wrap { grid-template-columns: minmax(0, 1fr) 330px; }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+@media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+.score span:nth-child(even) { white-space: nowrap; }
+.legend span { white-space: nowrap; }
+.legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.tbl { overflow-x: auto; }
+.tbl table td, .tbl table th { white-space: nowrap; }
+.tbl h3 { font-size: 13px; line-height: 1.3; margin: 0 0 4px; color: var(--text-2); }
+tr.total td { color: var(--text); border-top: 1px solid var(--text-2); }
+.xs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.xs .row { gap: 4px; }
+button:disabled, input:disabled, select:disabled { opacity: 0.45; cursor: default; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница значений Шепли</h1>
+  <p class="lead">Четыре признака — четыре игрока, предсказание — выигрыш. Значение Шепли φᵢ — средний прирост предсказания в момент, когда признак i становится известным, по всем способам собрать вокруг него остальные признаки</p>
+  <p class="lead">Выигрыш коалиции S признаков — v(S) = E[f(z) | z_S = x_S]: известные признаки берутся из объекта, остальные пробегают по фону и усредняются. Здесь v(S) считается интервенционно: фон — обучающие объекты, в каждую строку фона подставлены x_S, и по строкам берётся среднее f</p>
+  <p class="lead">Значения Шепли получаются перебором всех 2⁴ = 16 коалиций, переобучать ничего не нужно</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="wf" width="680" height="300" aria-label="Водопад от среднего предсказания к предсказанию"></canvas>
+      <div class="legend" id="legend"></div>
+      <div class="tbl" id="phiTable"></div>
+      <div id="viewCoal">
+        <div class="plots">
+          <div class="tbl" id="focusTable"></div>
+          <div class="tbl" id="vTable"></div>
+        </div>
+      </div>
+      <div id="viewOrd" class="hidden">
+        <canvas id="strips" width="680" height="300" aria-label="Все порядки прихода признаков"></canvas>
+        <div class="tbl" id="ordTable"></div>
+      </div>
+      <div id="about"></div>
+    </div>
+    <div class="panel">
+      <label>Игра
+        <select id="game">
+          <option value="model">Бустинг на данных, 4 признака</option>
+          <option value="toy">Предустановка: f = 3x₁ + x₂x₃</option>
+        </select>
+      </label>
+      <div id="modelCtl" style="display:grid;gap:14px">
+        <label>Корреляция x₂ с x₁ в данных ρ = <b id="rv"></b>
+          <input id="rho" type="range" min="0" max="0.97" step="0.01">
+        </label>
+        <div>
+          <div class="note" style="margin-bottom:4px">Объект: щёлкни по точке (кольца — отложенные, бледные точки — фон)</div>
+          <canvas id="sc" class="square" width="300" height="300" aria-label="Объекты в плоскости x₁, x₂"></canvas>
+        </div>
+        <label>Отложенный объект №<b id="ov"></b>
+          <input id="obj" type="range" min="1" step="1">
+        </label>
+      </div>
+      <div id="toyCtl" style="display:none;gap:10px">
+        <div class="note">Значения признаков объекта (0 или 1). Фон — все 16 комбинаций четырёх признаков: ровно независимые монеты с вероятностью ½</div>
+        <div class="xs" id="xs"></div>
+        <button id="toyNote">x = (1, 1, 1, 0)</button>
+      </div>
+      <label>Показать
+        <select id="view">
+          <option value="coal">коалиции</option>
+          <option value="orders">порядки</option>
+        </select>
+      </label>
+      <label id="focusLabel">Признак для разбора по коалициям
+        <select id="focus"></select>
+      </label>
+      <div class="row"><input id="cmp" type="checkbox"><span>сравнить с правилом пропусков дерева (слайд 27, path-dependent)</span></div>
+      <div class="score" id="facts"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const M = 4, NAMES = ["x₁", "x₂", "x₃", "x₄"], FEAT_VAR = ["--c0", "--c1", "--c2", "--text"]; // --c3 is plum, reserved for train
+const N_ALL = 400, N_TRAIN = 300, DATA_SEED = 5, N_EST = 60, LR = 0.1, DEPTH = 3, RHO_DEFAULT = 0.9, RHO_MAX = 0.97;
+const TOY = (z) => 3 * z[0] + z[1] * z[2];
+const TOY_TEXT = "3x₁ + x₂x₃";
+const COINS = Array.from({ length: 1 << M }, (_, k) => NAMES.map((_, j) => (k >> j) & 1));
+const setName = (S) => (S ? NAMES.filter((_, j) => (S >> j) & 1).join(" ") : "∅");
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const fact = (k) => (k <= 1 ? 1 : k * fact(k - 1));
+const frac = (s) => { const n = fact(s) * fact(M - s - 1), d = fact(M), g = gcd(n, d); return `${n / g}/${d / g}`; };
+const fmt = (v, d = 3) => { const a = Math.abs(v); return (v < 0 && +a.toFixed(d) !== 0 ? "−" : "") + toComma(a, d); };
+const sgn = (v, d = 3) => (v < 0 && +Math.abs(v).toFixed(d) !== 0 ? "" : "+") + fmt(v, d);
+
+const wf = $("wf"), wx = wf.getContext("2d"), sc = $("sc"), sx = sc.getContext("2d"), st = $("strips"), stx = st.getContext("2d");
+const state = { obj: 0, toyX: [1, 1, 1, 0] };
+const models = new Map();
+
+function getModel(rho) {
+  const key = rho.toFixed(2);
+  if (!models.has(key)) {
+    const d = makeShapData(N_ALL, DATA_SEED, { rho });
+    const train = { X: d.X.slice(0, N_TRAIN), y: d.y.slice(0, N_TRAIN) }, test = { X: d.X.slice(N_TRAIN), y: d.y.slice(N_TRAIN) };
+    const model = fitBoosting(train.X, train.y, { nEstimators: N_EST, lr: LR, maxDepth: DEPTH });
+    const my = test.y.reduce((s, v) => s + v, 0) / test.y.length;
+    const sse = test.X.reduce((s, x, i) => s + (boostingPredict(model, x) - test.y[i]) ** 2, 0);
+    const sst = test.y.reduce((s, v) => s + (v - my) ** 2, 0);
+    if (models.size > 6) models.delete(models.keys().next().value);
+    models.set(key, { train, test, model, r2: 1 - sse / sst });
+  }
+  return models.get(key);
+}
+
+function setup() {
+  const game = $("game").value, rho = +$("rho").value;
+  if (game === "toy") {
+    const x = state.toyX.slice();
+    const v = interventionalValues(TOY, x, COINS);
+    return { game, x, fx: TOY(x), v, vPath: null, phi: shapleyFromValues(v, M), phiPath: null, xtext: x.map(String), model: null };
+  }
+  const m = getModel(rho), x = m.test.X[state.obj];
+  const v = interventionalValues((z) => boostingPredict(m.model, z), x, m.train.X);
+  const vPath = treeCoalitionValues(m.model, x);
+  return { game, x, fx: boostingPredict(m.model, x), v, vPath, phi: shapleyFromValues(v, M), phiPath: shapleyFromValues(vPath, M), xtext: x.map((a) => fmt(a, 2)), model: m };
+}
+
+// How far apart the two v(S) rules are over all held-out objects of the current data: the mean |φ_interventional − φ_path| per feature.
+const gapCache = new Map();
+function gapStats(rho) {
+  const key = rho.toFixed(2);
+  if (!gapCache.has(key)) {
+    const m = getModel(rho), sum = [0, 0, 0, 0];
+    for (const x of m.test.X) {
+      const a = shapleyFromValues(interventionalValues((z) => boostingPredict(m.model, z), x, m.train.X), M), b = shapleyFromValues(treeCoalitionValues(m.model, x), M);
+      a.forEach((v, j) => (sum[j] += Math.abs(v - b[j])));
+    }
+    if (gapCache.size > 6) gapCache.delete(gapCache.keys().next().value);
+    gapCache.set(key, { n: m.test.X.length, mean: sum.map((v) => v / m.test.X.length) });
+  }
+  return gapCache.get(key);
+}
+
+function niceTicks(lo, hi, k = 5) {
+  const raw = (hi - lo) / k, p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * p).find((s) => s >= raw);
+  const out = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step) out.push(+t.toFixed(10));
+  return out;
+}
+
+const tickFmt = (t) => num(t);
+
+// Waterfall from E f to f(x). Rows are ordered by |φ|, largest first, as in the shap library; the order of the rows is
+// not an order of arrival of the features: each bar is the Shapley value, already averaged over all orders.
+function drawWaterfall(res) {
+  const cmp = $("cmp").checked && res.vPath;
+  const panels = [{ title: cmp ? "интервенционное v(S)" : "", v: res.v, phi: res.phi }];
+  if (cmp) panels.push({ title: "правило пропусков дерева (path-dependent)", v: res.vPath, phi: res.phiPath });
+  const ROW = 26, HEAD = cmp ? 24 : 6, GAP = 34, TOP = 8, BOTTOM = 34, ML = 150, MR = 84;
+  const panelH = HEAD + 6 * ROW;
+  wf.height = TOP + panels.length * panelH + (panels.length - 1) * GAP + BOTTOM;
+  wx.clearRect(0, 0, wf.width, wf.height);
+  let lo = Infinity, hi = -Infinity;
+  panels.forEach((p) => {
+    let c = p.v[0]; lo = Math.min(lo, c); hi = Math.max(hi, c);
+    p.phi.forEach((a) => { c += a; lo = Math.min(lo, c); hi = Math.max(hi, c); });
+  });
+  const pad = (hi - lo) * 0.06 || 0.5;
+  lo -= pad; hi += pad;
+  panels.forEach((p, k) => {
+    const y0 = TOP + k * (panelH + GAP) + HEAD;
+    const f = frame(wf, [lo, hi], [0, 1], { margin: [ML, y0, MR, wf.height - y0 - 6 * ROW] });
+    const ticks = niceTicks(lo, hi);
+    axes(wx, f, { xticks: ticks, xfmt: tickFmt });
+    wx.save();
+    wx.strokeStyle = css("--grid");
+    ticks.forEach((t) => { wx.beginPath(); wx.moveTo(f.px(t), f.mt); wx.lineTo(f.px(t), f.mt + f.H); wx.stroke(); });
+    wx.restore();
+    if (p.title) { wx.fillStyle = css("--text"); wx.font = font(13); wx.textAlign = "left"; wx.textBaseline = "middle"; mathText(wx, p.title, 8, y0 - 12); }
+    const rowY = (r) => f.mt + r * ROW + ROW / 2;
+    const order = [0, 1, 2, 3].sort((a, b) => Math.abs(p.phi[b]) - Math.abs(p.phi[a]));
+    const start = p.v[0], end = p.v[(1 << M) - 1];
+    const label = (r, text, strong) => { wx.fillStyle = css(strong ? "--text" : "--text-2"); wx.font = font(13); wx.textAlign = "right"; wx.textBaseline = "middle"; mathText(wx, text, ML - 8, rowY(r)); };
+    const value = (r, xr, text) => { wx.fillStyle = css("--text"); wx.font = font(12); wx.textAlign = "left"; wx.textBaseline = "middle"; mathText(wx, text, xr + 6, rowY(r)); };
+    const mark = (r, X) => { polyline(wx, [[f.px(X), rowY(r) - 9], [f.px(X), rowY(r) + 9]], css("--mark"), 3); };
+    label(0, "E f = v(∅)", true); mark(0, start); value(0, f.px(start), fmt(start));
+    let cum = start;
+    order.forEach((j, r) => {
+      const a = f.px(cum), b = f.px(cum + p.phi[j]);
+      wx.fillStyle = css(FEAT_VAR[j]);
+      wx.fillRect(Math.min(a, b), rowY(r + 1) - 9, Math.max(1.5, Math.abs(b - a)), 18);
+      polyline(wx, [[a, rowY(r) + 9], [a, rowY(r + 1) - 9]], css("--text-2"), 1);
+      label(r + 1, `${NAMES[j]} = ${res.xtext[j]}`);
+      value(r + 1, Math.max(a, b), sgn(p.phi[j]));
+      cum += p.phi[j];
+    });
+    polyline(wx, [[f.px(cum), rowY(4) + 9], [f.px(cum), rowY(5) - 9]], css("--text-2"), 1);
+    label(5, "f(x) = v(N)", true); mark(5, end); value(5, f.px(end), fmt(end));
+  });
+}
+
+function drawStrips(res) {
+  const { orders, inc } = shapleyOrders(res.v, M);
+  const ROW = 12, ML = 70, MR = 16, TOP = 14, BOTTOM = 34;
+  st.height = TOP + orders.length * ROW + BOTTOM;
+  stx.clearRect(0, 0, st.width, st.height);
+  const start = res.v[0], end = res.v[(1 << M) - 1];
+  let lo = Math.min(start, end), hi = Math.max(start, end);
+  orders.forEach((o, k) => { let c = start; o.forEach((i) => { c += inc[k][i]; lo = Math.min(lo, c); hi = Math.max(hi, c); }); });
+  const pad = (hi - lo) * 0.05 || 0.5;
+  const f = frame(st, [lo - pad, hi + pad], [0, 1], { margin: [ML, TOP, MR, BOTTOM] });
+  const ticks = niceTicks(lo - pad, hi + pad);
+  axes(stx, f, { xticks: ticks, xfmt: tickFmt });
+  stx.save(); stx.strokeStyle = css("--grid");
+  ticks.forEach((t) => { stx.beginPath(); stx.moveTo(f.px(t), f.mt); stx.lineTo(f.px(t), f.mt + f.H); stx.stroke(); });
+  stx.restore();
+  orders.forEach((o, k) => {
+    const y = f.mt + k * ROW + ROW / 2;
+    let c = start;
+    o.forEach((i) => {
+      const a = f.px(c), b = f.px(c + inc[k][i]);
+      stx.fillStyle = css(FEAT_VAR[i]);
+      stx.fillRect(Math.min(a, b), y - 4, Math.max(1, Math.abs(b - a)), 8);
+      c += inc[k][i];
+    });
+    stx.fillStyle = css("--text-2"); stx.font = font(11); stx.textAlign = "right"; stx.textBaseline = "middle";
+    stx.fillText(o.map((i) => i + 1).join(" "), ML - 8, y);
+  });
+  [start, end].forEach((X) => polyline(stx, [[f.px(X), f.mt - 6], [f.px(X), f.mt + f.H]], css("--mark"), 2, [5, 4]));
+  stx.fillStyle = css("--text-2"); stx.font = font(11); stx.textAlign = "left"; stx.textBaseline = "bottom";
+  mathText(stx, "порядок прихода признаков", 4, f.mt - 3);
+  return { orders, inc };
+}
+
+function tableHTML(title, head, rows, { total = null } = {}) {
+  const th = head.map((h) => `<th>${h}</th>`).join("");
+  const body = rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("");
+  const foot = total ? `<tr class="total">${total.map((c) => `<td>${c}</td>`).join("")}</tr>` : "";
+  return `${title ? `<h3>${title}</h3>` : ""}<table class="compact"><thead><tr>${th}</tr></thead><tbody>${body}${foot}</tbody></table>`;
+}
+
+function render() {
+  const res = setup(), cmp = $("cmp").checked && !!res.vPath, view = $("view").value, focus = +$("focus").value;
+  const isToy = res.game === "toy";
+  $("modelCtl").style.display = isToy ? "none" : "grid";
+  $("toyCtl").style.display = isToy ? "grid" : "none";
+  $("cmp").disabled = isToy;
+  if (isToy) $("cmp").checked = false;
+  $("viewCoal").classList.toggle("hidden", view !== "coal");
+  $("viewOrd").classList.toggle("hidden", view !== "orders");
+  $("focusLabel").classList.toggle("hidden", view !== "coal");
+  $("rv").textContent = toComma(+$("rho").value, 2);
+  $("ov").textContent = state.obj + 1;
+
+  drawWaterfall(res);
+  const end = res.v[(1 << M) - 1], start = res.v[0];
+  $("legend").innerHTML = NAMES.map((n, j) => `<span><i class="sw" style="background:var(${FEAT_VAR[j]})"></i>${n}</span>`).join("");
+
+  const gap = cmp ? gapStats(+$("rho").value) : null;
+  const phiHead = ["признак", "значение", "φ (интервенц.)"].concat(cmp ? ["φ (пропуски)", "разность", `средн. |разн.|, ${gap.n} объектов`] : []);
+  const phiRows = NAMES.map((n, j) => [n, res.xtext[j], sgn(res.phi[j])].concat(cmp ? [sgn(res.phiPath[j]), sgn(res.phiPath[j] - res.phi[j]), fmt(gap.mean[j])] : []));
+  const sum = res.phi.reduce((s, a) => s + a, 0), sumP = cmp ? res.phiPath.reduce((s, a) => s + a, 0) : 0;
+  $("phiTable").innerHTML = tableHTML("Значения Шепли", phiHead, phiRows, { total: ["Σφ", "", fmt(sum)].concat(cmp ? [fmt(sumP), "", ""] : []) });
+
+  const masks = Array.from({ length: 1 << M }, (_, k) => k).sort((a, b) => popcount(a) - popcount(b) || a - b);
+  if (view === "coal") {
+    const head = ["S", "|S|", "v(S)"].concat(cmp ? ["v(S) пропуски"] : []);
+    $("vTable").innerHTML = tableHTML("Выигрыш коалиции v(S): все 2⁴ коалиций", head,
+      masks.map((S) => [setName(S), popcount(S), fmt(res.v[S])].concat(cmp ? [fmt(res.vPath[S])] : [])));
+    const others = masks.filter((S) => !((S >> focus) & 1)), w = shapleyWeights(M);
+    const rows = others.map((S) => {
+      const d = res.v[S | (1 << focus)] - res.v[S];
+      return [setName(S), fmt(res.v[S]), fmt(res.v[S | (1 << focus)]), sgn(d), frac(popcount(S)), sgn(w[popcount(S)] * d)];
+    });
+    $("focusTable").innerHTML = tableHTML(`Формула для ${NAMES[focus]}: S ⊆ N ∖ {${NAMES[focus]}}`,
+      ["S", "v(S)", `v(S ∪ ${NAMES[focus]})`, "прирост", "вес", "вес·прирост"], rows, { total: ["", "", "", "", "φ" + ["₁", "₂", "₃", "₄"][focus], fmt(res.phi[focus])] });
+  } else {
+    const { orders, inc } = drawStrips(res);
+    const rows = orders.map((o, k) => [o.map((i) => i + 1).join(" ")].concat(inc[k].map((a) => sgn(a)), [fmt(inc[k].reduce((s, a) => s + a, 0))]));
+    const mean = [0, 1, 2, 3].map((j) => inc.reduce((s, r) => s + r[j], 0) / inc.length);
+    $("ordTable").innerHTML = tableHTML("Прирост каждого признака в момент прихода, по всем 4! = " + orders.length + " порядкам", ["порядок"].concat(NAMES, ["Σ"]), rows,
+      { total: ["среднее = φ"].concat(mean.map((a) => sgn(a)), [fmt(mean.reduce((s, a) => s + a, 0))]) });
+  }
+
+  const row = (k, val) => `<span>${k}</span><span>${val}</span>`;
+  $("facts").innerHTML =
+    row("E f = v(∅)", fmt(start)) +
+    row("f(x) = v(N)", fmt(end)) +
+    row("f(x) − E f", fmt(end - start)) +
+    row("Σφ", fmt(sum)) +
+    (isToy ? row("Игра", "f = " + TOY_TEXT) : row("R² модели на тесте", fmt(res.model.r2, 3)));
+  $("about").innerHTML = [
+    ...(isToy
+      ? [`Игра f = ${TOY_TEXT}: признак 4 в ней не участвует, нулевой игрок, и φ₄ = 0 при любых значениях. Фон — все 16 комбинаций четырёх бинарных признаков, то есть независимые монеты, и интервенционное v(S) здесь совпадает с E[f | x_S] точно. Правило пропусков дерева для этой игры не применяется: f не дерево`]
+      : [`Модель — градиентный бустинг, ${N_EST} деревьев глубины ${DEPTH}, шаг ${toComma(LR, null)}, на ${N_TRAIN} обучающих объектах; данные: y = ${SHAP_TRUTH_TEXT} + шум с σ = ${toComma(SHAP_NOISE, null)}, x₂ коррелирует с x₁ с коэффициентом ρ, x₃ и x₄ независимы`,
+        `v(S) — интервенционное: фон — все ${N_TRAIN} обучающих объектов, E f = v(∅) — среднее предсказание модели по фону, а не среднее y. При ρ > 0 в строке фона с подставленным x_S встречаются сочетания значений, которых в данных нет, и модель вызывается вне данных`]),
+    `Эффективность Σφ = f(x) − E f — тождество формулы Шепли: сумма приростов вдоль любого порядка телескопируется, так что совпадение чисел в таблице и в строке "Σφ" не проверка модели и не может не сойтись; его нарушило бы только ошибка в коде`,
+    ...(cmp ? [`Правило пропусков (слайд 27) считает E[f | x_S] по счётчикам узлов деревьев, обученных на обучающей выборке: признак вне S "пропущен", и объект идёт в оба поддерева с весами долей обучающих объектов`,
+      `Для независимых признаков оба правила оценивают одно и то же ожидание; при коррелированных они задают две разные игры, и значения между x₁ и x₂ делятся по-разному: интервенционное ломает корреляцию фона, правило пропусков наследует её от структуры деревьев. Это разные игры, а не ошибка одного из правил`] : []),
+  ].map((t) => `<p class="note">${t}</p>`).join("");
+}
+
+function drawScatter(res) {
+  const m = getModel(+$("rho").value);
+  const f = frame(sc, [-3.4, 3.4], [-3.4, 3.4], { margin: [34, 22, 10, 30], equal: true });
+  sx.clearRect(0, 0, sc.width, sc.height);
+  axes(sx, f, { xticks: [-2, 0, 2], yticks: [-2, 0, 2], xlabel: "x₁", ylabel: "x₂" });
+  sx.save(); sx.fillStyle = css("--text-2"); sx.globalAlpha = 0.35;
+  m.train.X.forEach((p) => { sx.beginPath(); sx.arc(f.px(p[0]), f.py(p[1]), 2.2, 0, 2 * Math.PI); sx.fill(); });
+  sx.restore();
+  m.test.X.forEach((p) => dot(sx, f.px(p[0]), f.py(p[1]), css("--text"), { hollow: true, r: 3.6 }));
+  probeMark(sx, f.px(m.test.X[state.obj][0]), f.py(m.test.X[state.obj][1]));
+  return f;
+}
+
+function redraw() {
+  render();
+  if ($("game").value === "model") drawScatter();
+}
+
+(() => {
+  $("rho").value = RHO_DEFAULT; $("rho").max = RHO_MAX;
+  const m = getModel(RHO_DEFAULT);
+  $("obj").max = m.test.X.length;
+  $("focus").innerHTML = NAMES.map((n, j) => `<option value="${j}">${n}</option>`).join("");
+  $("xs").innerHTML = NAMES.map((n, j) => `<div class="row"><input id="t${j}" type="checkbox"${state.toyX[j] ? " checked" : ""}><span>${n}</span></div>`).join("");
+  state.obj = 0; $("obj").value = 1;
+})();
+["game", "view", "focus", "cmp"].forEach((id) => $(id).addEventListener("input", redraw));
+$("rho").addEventListener("input", redraw);
+$("obj").addEventListener("input", () => { state.obj = +$("obj").value - 1; redraw(); });
+NAMES.forEach((_, j) => $("t" + j).addEventListener("input", () => { state.toyX[j] = $("t" + j).checked ? 1 : 0; redraw(); }));
+$("toyNote").addEventListener("click", () => { state.toyX = [1, 1, 1, 0]; NAMES.forEach((_, j) => ($("t" + j).checked = !!state.toyX[j])); redraw(); });
+sc.addEventListener("pointerdown", (e) => {
+  const m = getModel(+$("rho").value), f = frame(sc, [-3.4, 3.4], [-3.4, 3.4], { margin: [34, 22, 10, 30], equal: true });
+  const [px, py] = canvasXY(sc, e);
+  let best = 0, bd = Infinity;
+  m.test.X.forEach((p, i) => { const d = Math.hypot(f.px(p[0]) - px, f.py(p[1]) - py); if (d < bd) { bd = d; best = i; } });
+  state.obj = best; $("obj").value = best + 1; redraw();
+});
+onTheme(redraw);
+redraw();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+/* Roles shared by the discrete math pages, over sandbox_kit's page.css: no hex here. */
+.wrap { grid-template-columns: 300px minmax(0, 1fr); }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+h2 { margin: 0 0 8px; border: 0; padding: 0; }
+.panel h2 { margin: 0; }
+.main td, .main th { text-align: left; padding-right: 14px; }
+#tt td, #tt th { text-align: center; }
+button.bit { min-width: 2.2em; padding: 2px 8px; font-family: var(--ddlc-font-data); font-variant-numeric: tabular-nums; }
+button.bit.one { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.main tr.sel td { background: var(--ddlc-selection); color: var(--text); }
+tr.hl td { background: var(--ddlc-selection); color: var(--text); }
+.formula .term { white-space: nowrap; }
+.formula .none { color: var(--text-2); }
+#detail { display: grid; gap: 8px; min-width: 0; }
+.vec { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.vec .label { color: var(--text-2); font-size: 13px; min-width: 5.5em; }
+.pair { display: inline-flex; gap: 4px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; }
+.blk { letter-spacing: 0.08em; font-family: var(--ddlc-font-data); font-variant-numeric: tabular-nums; }
+.blk.new { color: var(--accent); }
+.blk.old2 { color: var(--text-2); }
+tr.cls { cursor: pointer; }
+tr.cls:hover td, tr.cls.sel td { background: var(--ddlc-selection); }
+td.verdict { white-space: nowrap; text-align: left; }
+td.why { text-align: left; }
+.main td.in { color: var(--ddlc-monika-eye); }
+.main td.out { color: var(--ddlc-series-2); }
+.check { font-size: 13px; color: var(--text-2); margin: 0; }

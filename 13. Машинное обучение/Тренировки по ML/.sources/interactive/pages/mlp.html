@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница нейросети</title>
+<style>
+/*COMMON_CSS*/
+.stack { display: grid; gap: 12px; min-width: 0; }
+.maps { display: grid; gap: 10px; }
+.maprow { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.maprow > .rowname { flex: 0 0 100%; font-size: 13px; color: var(--text-2); }
+.nm { margin: 0; width: 84px; font-size: 11px; color: var(--text-2); line-height: 1.25; }
+.nm canvas { width: 84px; height: 84px; image-rendering: auto; }
+.nm.hot canvas { outline: 2px solid var(--mark); }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btns button { flex: 1 1 auto; }
+#info { font-size: 12px; min-height: 6em; }
+#info table { margin-top: 4px; }
+button.on { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница нейросети</h1>
+  <p class="lead">Полносвязная сеть учится на двух признаках вживую. Зона — вероятность P(y=1): оттенок говорит о классе, насыщенность об уверенности, чёрный контур — P = 0,5. Заливка точек — обучение, кольца — тест</p>
+  <p class="lead">Пунктир — прямые wᵀx + b = 0 нейронов первого слоя. Наведите курсор на зону — увидите вклад скрытых нейронов в логит выходного нейрона, на мини-карту — веса её нейрона</p>
+  <div class="wrap">
+    <div class="stack">
+      <canvas id="zone" class="square" width="640" height="640" aria-label="Зона P(y=1) и прямые нейронов первого слоя"></canvas>
+      <canvas id="loss" width="640" height="300" aria-label="Потеря на обучении и на тесте по эпохам"></canvas>
+      <div class="maps" id="maps"></div>
+    </div>
+    <div class="panel">
+      <label>Сценарий
+        <select id="scenario"></select>
+      </label>
+      <p class="note" id="hint"></p>
+      <label>Данные
+        <select id="data">
+          <option value="xor">xor</option>
+          <option value="circles" selected>circles</option>
+          <option value="moons">moons</option>
+        </select>
+      </label>
+      <label>Скрытых слоёв
+        <select id="nl"><option>1</option><option>2</option><option>3</option></select>
+      </label>
+      <label>Нейронов в слое 1: <b id="n1v"></b>
+        <input id="n1" type="range" min="1" max="8" step="1" value="3">
+      </label>
+      <label>Нейронов в слое 2: <b id="n2v"></b>
+        <input id="n2" type="range" min="1" max="8" step="1" value="3">
+      </label>
+      <label>Нейронов в слое 3: <b id="n3v"></b>
+        <input id="n3" type="range" min="1" max="8" step="1" value="3">
+      </label>
+      <label>Активация скрытых слоёв
+        <select id="act">
+          <option value="tanh">tanh</option>
+          <option value="logistic">сигмоида</option>
+          <option value="relu">ReLU</option>
+          <option value="linear">линейная</option>
+        </select>
+      </label>
+      <label>Шаг η = <b id="lrv"></b>
+        <input id="lr" type="range" min="-3" max="1" step="0.01" value="0">
+      </label>
+      <label>Seed начальных весов
+        <input id="seed" type="number" min="0" step="1" value="1">
+      </label>
+      <label>Эпох за кадр
+        <select id="speed"><option>1</option><option>5</option><option selected>25</option><option>100</option></select>
+      </label>
+      <label class="row"><input id="xlog" type="checkbox"> ось эпох в логарифме</label>
+      <div class="btns">
+        <button id="step">шаг</button>
+        <button id="start">старт</button>
+        <button id="stop">стоп</button>
+        <button id="reset">заново</button>
+      </div>
+      <div class="score" id="score"></div>
+      <div id="info"></div>
+      <div id="opt"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const BLOWUP = 2;      // the peak loss counts as an explosion above this many times the start loss
+const FLAT = 1e-3;     // the prediction counts as a constant when P(y=1) varies by less than this over the view
+const ACT_NAME = { tanh: "tanh", logistic: "сигмоида", relu: "ReLU", linear: "линейная" };
+const zone = $("zone"), zx = zone.getContext("2d"), lossCv = $("loss"), lx = lossCv.getContext("2d");
+
+let net, P, d, view, epoch, hist, peak, running = false, hover = null, corners = null, cornersAt = -1;
+let mapCv = [];
+
+const sublist = (xs, name) => xs.map((v, i) => `${name}${sub(i + 1)} = ${num(v)}`).join(", ");
+
+function readParams() {
+  const nl = +$("nl").value;
+  return { data: $("data").value, hidden: [1, 2, 3].slice(0, nl).map((k) => +$("n" + k).value), act: $("act").value, seed: +$("seed").value || 0 };
+}
+const lr = () => 10 ** +$("lr").value;
+
+function reset() {
+  P = readParams(); d = DATA[P.data];
+  view = dataView(zone, d, 0.5);
+  net = mlpInit(P.hidden, P.act, P.seed);
+  epoch = 0;
+  const l0 = [mlpLoss(net, d.Xtr, d.ytr), mlpLoss(net, d.Xte, d.yte)];
+  hist = { train: [l0[0]], test: [l0[1]] };
+  peak = l0[0];
+  hover = null; corners = null; cornersAt = -1;
+  buildMaps();
+  draw();
+}
+
+function epochs(n) {
+  for (let k = 0; k < n; k++) {
+    net = mlpStep(net, d.Xtr, d.ytr, lr());
+    epoch++;
+    const tr = mlpLoss(net, d.Xtr, d.ytr);
+    hist.train.push(tr); hist.test.push(mlpLoss(net, d.Xte, d.yte));
+    if (!Number.isFinite(tr)) { stop(); break; }
+    peak = Math.max(peak, tr);
+  }
+}
+
+function frameLoop() {
+  if (!running) return;
+  const t0 = performance.now(), n = +$("speed").value;
+  // A budget of the frame time keeps a big network smooth: fewer epochs than asked are fine.
+  for (let k = 0; k < n && performance.now() - t0 < 14; k++) epochs(1);
+  draw();
+  if (running) requestAnimationFrame(frameLoop);
+}
+function start() { if (running) return; running = true; $("start").classList.add("on"); requestAnimationFrame(frameLoop); }
+function stop() { running = false; $("start").classList.remove("on"); }
+
+// ---------- drawing ----------
+
+function lineEnds(w1, w2, b) {
+  // The segment of w1 x + w2 y + b = 0 inside the view.
+  const [x0, y0] = view.lo, [x1, y1] = view.hi, pts = [];
+  if (Math.abs(w2) > 1e-12) for (const x of [x0, x1]) { const y = -(w1 * x + b) / w2; if (y >= y0 && y <= y1) pts.push([x, y]); }
+  if (Math.abs(w1) > 1e-12) for (const y of [y0, y1]) { const x = -(w2 * y + b) / w1; if (x >= x0 && x <= x1) pts.push([x, y]); }
+  let best = null, far = 0;
+  for (const p of pts) for (const q of pts) { const dd = Math.hypot(p[0] - q[0], p[1] - q[1]); if (dd > far) { far = dd; best = [p, q]; } }
+  return best;
+}
+
+function drawZone() {
+  const proba = (x) => { const q = mlpProba(net, x); return Number.isFinite(q) ? [1 - q, q] : null; };
+  zx.clearRect(0, 0, zone.width, zone.height);
+  drawClassifier(zx, view, d, proba, [0, 1], { N: 80 });
+  zx.save();
+  zx.setLineDash([7, 5]); zx.lineWidth = 1.5; zx.strokeStyle = css("--text");
+  zx.font = font(12);
+  net.W[0].forEach((row, j) => {
+    const ends = lineEnds(row[0], row[1], net.b[0][j]);
+    if (!ends) return;
+    const [a, b] = ends.map((p) => view.toPx(p));
+    zx.beginPath(); zx.moveTo(a[0], a[1]); zx.lineTo(b[0], b[1]); zx.stroke();
+    // the label sits at the end of the line, pulled towards the centre so it stays inside the canvas
+    const toC = [zone.width / 2 - a[0], zone.height / 2 - a[1]], len = Math.hypot(...toC) || 1;
+    const lxp = a[0] + (toC[0] / len) * 16, lyp = a[1] + (toC[1] / len) * 16, label = "h" + sub(j + 1);
+    zx.setLineDash([]);
+    zx.fillStyle = css("--surface"); zx.globalAlpha = 0.85;
+    zx.fillRect(lxp - 13, lyp - 9, 26, 18);
+    zx.globalAlpha = 1; zx.fillStyle = css("--text"); zx.textAlign = "center"; zx.textBaseline = "middle";
+    mathText(zx, label, lxp, lyp);
+    zx.setLineDash([7, 5]);
+  });
+  zx.restore();
+  if (hover) probeMark(zx, ...view.toPx(hover));
+}
+
+function drawLoss() {
+  const cv = lossCv, ctx = lx;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const finite = [...hist.train, ...hist.test].filter((v) => Number.isFinite(v) && v > 0);
+  // The lower limit follows the data down to the power of ten below the smallest loss; below 1e-9 it is cut.
+  const floorLog = Math.floor(Math.log10(Math.min(...finite)));
+  const lo = Math.max(floorLog, -9);
+  let hi = Math.ceil(Math.log10(Math.max(...finite)));
+  if (hi <= lo) hi = lo + 1;
+  const xmax = Math.max(100, epoch), xlog = $("xlog").checked;
+  // On the log axis an epoch k sits at log10(k + 1), so epoch 0 stays on the axis.
+  const X = (k) => (xlog ? Math.log10(k + 1) : k);
+  const f = frame(cv, [0, X(xmax)], [lo, hi], { margin: [52, 28, 140, 44] });
+  const xticks = [];
+  if (xlog) { for (let t = 1; t <= xmax; t *= 10) xticks.push(X(t)); xticks.unshift(0); }
+  else {
+    const step = [1, 2, 5].map((m) => m * 10 ** Math.floor(Math.log10(xmax / 4))).concat([10 ** (Math.floor(Math.log10(xmax / 4)) + 1)]).find((s) => xmax / s <= 5);
+    for (let t = 0; t <= xmax; t += step) xticks.push(t);
+  }
+  axes(ctx, f, { xticks, yticks: logTicks(lo, hi), xlabel: xlog ? "эпоха, лог. шкала" : "эпоха", ylabel: "потеря, лог. шкала" + (floorLog < -9 ? " (обрезана снизу)" : ""), yfmt: (t) => num(10 ** t), xfmt: (t) => String(xlog ? Math.round(10 ** t - 1) : t) });
+  const ly = (v) => f.py(Math.max(lo, Math.min(hi, Math.log10(v))));
+  const stride = Math.max(1, Math.ceil(hist.train.length / 700));
+  const looks = { train: { col: "--text", w: 2, dash: [] }, test: { col: "--text-2", w: 2, dash: [7, 4] } };
+  const ends = [];
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  for (const key of ["train", "test"]) {
+    const h = hist[key], pts = [];
+    // A stride thins a long run for speed; on the log axis the early epochs are dense in pixels and all kept.
+    for (let k = 0; k < h.length; k += xlog && k < 200 ? 1 : stride) if (Number.isFinite(h[k]) && h[k] > 0) pts.push([f.px(X(k)), ly(h[k])]);
+    const last = h.length - 1;
+    if (Number.isFinite(h[last]) && h[last] > 0) pts.push([f.px(X(last)), ly(h[last])]);
+    polyline(ctx, pts, css(looks[key].col), looks[key].w, looks[key].dash);
+  }
+  ctx.restore();
+  for (const key of ["train", "test"]) {
+    const v = hist[key][hist[key].length - 1];
+    ends.push({ text: key, y: Number.isFinite(v) && v > 0 ? ly(v) : f.mt + f.H, look: looks[key], strong: key === "train" });
+  }
+  endLabels(ctx, f, ends);
+}
+
+// Output of every hidden neuron over the view, on a coarse grid, normalised per map to its own range.
+const MAP_G = 32;
+const mapBuf = document.createElement("canvas"); mapBuf.width = mapBuf.height = MAP_G;
+function drawMaps() {
+  if (!mapCv.length) return;
+  const grid = [];
+  for (let i = 0; i < MAP_G; i++) for (let j = 0; j < MAP_G; j++) {
+    const x = view.toX(((j + 0.5) / MAP_G) * view.W, ((i + 0.5) / MAP_G) * view.W);
+    grid.push(mlpActivations(net, x).h);
+  }
+  const bg = hex(css("--surface")), fg = hex(css("--text"));
+  mapCv.forEach((row, k) => row.forEach(({ cv, cap }, j) => {
+    const vals = grid.map((h) => h[k + 1][j]);
+    const fin = vals.filter(Number.isFinite);
+    const lo = fin.length ? Math.min(...fin) : 0, hi = fin.length ? Math.max(...fin) : 0, span = hi - lo || 1;
+    const img = new ImageData(MAP_G, MAP_G);
+    vals.forEach((v, q) => {
+      const t = Number.isFinite(v) ? (v - lo) / span : 0;
+      for (let c = 0; c < 3; c++) img.data[q * 4 + c] = Math.round(bg[c] + (fg[c] - bg[c]) * (0.08 + 0.8 * t));
+      img.data[q * 4 + 3] = 255;
+    });
+    mapBuf.getContext("2d").putImageData(img, 0, 0);
+    const cx = cv.getContext("2d");
+    cx.imageSmoothingEnabled = true;
+    cx.drawImage(mapBuf, 0, 0, cv.width, cv.height);
+    cap.innerHTML = `h<sub>${j + 1}</sub> ${num(lo, 2)}…${num(hi, 2)}`;
+  }));
+}
+
+function buildMaps() {
+  const box = $("maps");
+  box.innerHTML = "";
+  mapCv = [];
+  P.hidden.forEach((n, k) => {
+    const row = document.createElement("div"); row.className = "maprow";
+    const name = document.createElement("div"); name.className = "rowname";
+    name.textContent = `слой ${k + 1}: выходы нейронов, ${ACT_NAME[P.act]}`;
+    row.appendChild(name);
+    const cells = [];
+    for (let j = 0; j < n; j++) {
+      const fig = document.createElement("figure"); fig.className = "nm";
+      const cv = document.createElement("canvas"); cv.width = cv.height = 96;
+      const cap = document.createElement("figcaption");
+      fig.append(cv, cap); row.appendChild(fig);
+      fig.addEventListener("pointerenter", () => { fig.classList.add("hot"); showNeuron(k, j); });
+      fig.addEventListener("pointerleave", () => { fig.classList.remove("hot"); showDefault(); });
+      cells.push({ cv, cap });
+    }
+    mapCv.push(cells); box.appendChild(row);
+  });
+}
+
+// ---------- readouts ----------
+
+function showDefault() {
+  $("info").innerHTML = `<p class="note">Зона: вклад скрытых нейронов в логит выходного нейрона в точке под курсором. Мини-карта: веса её нейрона</p>`;
+}
+function showNeuron(k, j) {
+  const w = net.W[k][j], last = k === net.W.length - 2;
+  const into = k === 0 ? "признаки x" : `выходы слоя ${k}`;
+  $("info").innerHTML = `<p class="note">Нейрон ${j + 1} слоя ${k + 1}, вход — ${into}: ${sublist(w, "w")}, b = ${num(net.b[k][j])}` +
+    (last ? `<br>В выходной нейрон входит с весом v${sub(j + 1)} = ${num(net.W[k + 1][0][j])}` : "") + `</p>`;
+}
+function showOutput(x) {
+  const { h } = mlpActivations(net, x), L = net.W.length, hl = h[L - 1], v = net.W[L - 1][0], c = net.b[L - 1][0];
+  const logit = v.reduce((s, vj, j) => s + vj * hl[j], c);
+  const rows = v.map((vj, j) => `<tr><td>h${sub(j + 1)}</td><td>${num(hl[j])}</td><td>${num(vj)}</td><td>${num(vj * hl[j])}</td></tr>`).join("");
+  $("info").innerHTML = `<p class="note">Точка (${num(x[0], 2)}; ${num(x[1], 2)}), P(y=1) = ${num(1 / (1 + Math.exp(-logit)), 3)}. Выходной нейрон: логит = Σ v<sub>j</sub>·h<sub>j</sub> + c</p>` +
+    `<table class="compact"><tr><th></th><th>h</th><th>v</th><th>v·h</th></tr>${rows}<tr><td>c</td><td></td><td>${num(c)}</td><td>${num(c)}</td></tr><tr><td>логит</td><td></td><td></td><td>${num(logit)}</td></tr></table>`;
+}
+
+function score() {
+  const acc = (X, y) => accuracy(X.map((x) => (mlpProba(net, x) > 0.5 ? 1 : 0)), y);
+  const tr = hist.train[epoch], te = hist.test[epoch];
+  const ps = [];
+  for (let i = 0; i < 24; i++) for (let j = 0; j < 24; j++) ps.push(mlpProba(net, view.toX(((j + 0.5) / 24) * view.W, ((i + 0.5) / 24) * view.W)));
+  const spread = Math.max(...ps) - Math.min(...ps);
+  const start0 = hist.train[0];
+  if (!running && cornersAt !== epoch) { corners = mlpCorners(net, { lo: view.lo, hi: view.hi }); cornersAt = epoch; }
+  const blown = !Number.isFinite(tr) ? "не число, расходится" : peak > BLOWUP * start0 ? `×${num(peak / start0, 2)}, взрыв` : `×${num(peak / start0, 2)}`;
+  const pred = !Number.isFinite(tr) ? "—" : spread < FLAT ? `константа ${num(ps[0], 3)}` : `от ${num(Math.min(...ps), 2)} до ${num(Math.max(...ps), 2)}`;
+  $("score").innerHTML =
+    `<span>Эпоха</span><span>${epoch}</span>` +
+    `<span>Потеря train</span><span>${num(tr)}</span>` +
+    `<span>Потеря test</span><span>${num(te)}</span>` +
+    `<span>Верно train</span><span>${num(acc(d.Xtr, d.ytr))}</span>` +
+    `<span>Верно test</span><span>${num(acc(d.Xte, d.yte))}</span>` +
+    `<span>Пик train к старту</span><span>${blown}</span>` +
+    `<span>P(y=1) в кадре</span><span>${pred}</span>` +
+    `<span>Углов границы</span><span>${running ? "после стопа" : corners === null ? "нет" : corners}</span>`;
+}
+
+function draw() {
+  $("n1v").textContent = $("n1").value; $("n2v").textContent = $("n2").value; $("n3v").textContent = $("n3").value;
+  $("lrv").textContent = num(lr());
+  const nl = +$("nl").value;
+  [2, 3].forEach((k) => { $("n" + k).disabled = k > nl; $("n" + k).parentElement.style.opacity = k > nl ? 0.4 : 1; });
+  drawZone(); drawLoss(); drawMaps(); score();
+}
+
+// ---------- controls ----------
+
+const scenarios = MLP_SCENARIOS;
+$("scenario").innerHTML = `<option value="">свой набор</option>` + scenarios.map((s) => `<option value="${s.id}">${s.label}</option>`).join("");
+function applyScenario(s) {
+  stop();
+  $("data").value = s.data; $("nl").value = String(s.hidden.length);
+  s.hidden.forEach((n, k) => { $("n" + (k + 1)).value = n; });
+  $("act").value = s.act; $("lr").value = String(Math.log10(s.lr)); $("seed").value = s.seed;
+  $("xlog").checked = !!s.logEpochs;
+  $("hint").textContent = `Воспроизводится к эпохе ${s.epochs} (так же, как в тесте mlcore.test.mjs)`;
+  reset(); start();
+}
+$("scenario").addEventListener("input", () => {
+  const s = scenarios.find((q) => q.id === $("scenario").value);
+  if (s) applyScenario(s); else $("hint").textContent = "";
+});
+const manual = () => { $("scenario").value = ""; $("hint").textContent = ""; };
+["data", "nl", "n1", "n2", "n3", "act", "seed"].forEach((id) => $(id).addEventListener("input", () => { manual(); stop(); reset(); }));
+$("lr").addEventListener("input", () => { manual(); draw(); });
+$("xlog").addEventListener("input", draw);
+$("speed").addEventListener("input", () => {});
+$("step").addEventListener("click", () => { stop(); epochs(1); draw(); });
+$("start").addEventListener("click", start);
+$("stop").addEventListener("click", () => { stop(); draw(); });
+$("reset").addEventListener("click", () => { stop(); reset(); });
+
+zone.addEventListener("pointermove", (e) => {
+  hover = view.toX(...canvasXY(zone, e));
+  showOutput(hover); drawZone();
+});
+zone.addEventListener("pointerleave", () => { hover = null; showDefault(); drawZone(); });
+
+$("opt").innerHTML = [
+  "Оптимизатор: полный градиентный спуск без инерции. Эпоха — один шаг w ← w − η·∇L по всей обучающей части, потеря — средняя логистическая",
+  "Тот же шаг делает solver=\"sgd\" в sklearn при momentum = 0 и батче во всю выборку; тест сверяет с ним веса после каждого шага. Начальные веса — равномерно по Glorot, как в sklearn, их задаёт seed",
+  `Обучение идёт по train: тест только показан, по нему ничего не выбирается и не останавливается. Данные: ${d0().Xtr.length} точек на обучении и ${d0().Xte.length} на тесте`,
+].map((t) => `<p class="note">${t}</p>`).join("");
+function d0() { return DATA[$("data").value]; }
+showDefault();
+onTheme(draw);
+reset();
+</script>
+</body>
+</html>

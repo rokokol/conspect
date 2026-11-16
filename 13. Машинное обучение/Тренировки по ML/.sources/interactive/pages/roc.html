@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница ROC и PR</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.plots canvas:first-child { grid-column: 1 / -1; }
+.cm { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px; font-variant-numeric: tabular-nums; font-size: 14px; text-align: center; }
+.cm div { padding: 4px; border-radius: 3px; }
+.cm .h { color: var(--text-2); font-size: 12px; }
+.cm .tp, .cm .tn { background: color-mix(in srgb, var(--c2) 25%, transparent); }
+.cm .fp, .cm .fn { background: color-mix(in srgb, var(--c1) 22%, transparent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница ROC и PR</h1>
+  <p class="lead">Баллы — вероятности класса 1 от логистической регрессии, посчитанные на всей выборке (обучение и тест вместе, чтобы кривые были глаже). Всё, что не меньше порога, объявляется классом 1. Двигай порог и смотри, как точка бежит по ROC- и PR-кривым</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="hist" width="640" height="220" aria-label="Распределение баллов по классам"></canvas>
+      <canvas id="roc" width="320" height="320" aria-label="ROC-кривая"></canvas>
+      <canvas id="pr" width="320" height="320" aria-label="PR-кривая"></canvas>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="moons">Две луны</option>
+          <option value="linear">Почти линейно разделимые</option>
+          <option value="xor">XOR (линейная модель плоха)</option>
+        </select>
+      </label>
+      <label>Степень признаков модели: <b id="dv"></b>
+        <input id="deg" type="range" min="1" max="4" value="1">
+      </label>
+      <div class="row"><input id="imb" type="checkbox"><span>Дисбаланс: оставить 10 % класса 1</span></div>
+      <label>Порог t = <b id="tv"></b>
+        <input id="t" type="range" min="0" max="1" step="0.01" value="0.5">
+      </label>
+      <div class="cm" id="cm"></div>
+      <div class="score" id="score"></div>
+      <p class="note">ROC-AUC не зависит от порога и почти не замечает дисбаланса: FPR делится на число отрицательных. PR-кривая при дисбалансе проседает — precision считается среди объявленных положительными</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+
+function setup() {
+  const d = DATA[$("ds").value], deg = +$("deg").value;
+  const m = fitLogreg(d.Xtr, d.ytr, { degree: deg, C: 1 });
+  // Evaluate on train + test for a less jagged curve; the model is fixed.
+  let X = [...d.Xtr, ...d.Xte], y = [...d.ytr, ...d.yte];
+  if ($("imb").checked) {
+    let seen = 0;
+    const keep = y.map((v) => v === 0 || seen++ % 10 === 0);
+    X = X.filter((_, i) => keep[i]); y = y.filter((_, i) => keep[i]);
+  }
+  const s = X.map((x) => logregProba(m, x));
+  const roc = rocCurve(s, y, { dropIntermediate: false });
+  // PR from the same thresholds, recall rising.
+  const order = [...new Set(s)].sort((a, b) => b - a);
+  const pr = order.map((t) => confusion(s, y, t)).map((c) => [c.recall, c.precision]);
+  return { s, y, roc, pr, auc: auc(roc) };
+}
+let S = setup();
+
+function draw() {
+  $("dv").textContent = $("deg").value;
+  const t = +$("t").value;
+  $("tv").textContent = toComma(t, 2);
+  const { s, y, roc, pr } = S;
+  const c = confusion(s, y, t);
+  const c0 = css("--c0"), c1 = css("--c1");
+
+  const hv = $("hist"), hx = hv.getContext("2d");
+  hx.clearRect(0, 0, hv.width, hv.height);
+  // Each class as a share of its own size, so a rare class stays visible.
+  const B = 25, bins = [0, 1].map((k) => {
+    const h = new Array(B).fill(0), n = y.filter((v) => v === k).length;
+    s.forEach((v, i) => { if (y[i] === k) h[Math.min(B - 1, Math.floor(v * B))] += 1 / n; });
+    return h;
+  });
+  const hmax = Math.max(...bins[0], ...bins[1]);
+  const g = frame(hv, [0, 1], [0, hmax], { margin: [44, 28, 14, 42] });
+  axes(hx, g, { xticks: [0, 0.25, 0.5, 0.75, 1], yticks: [0, +hmax.toFixed(2)], fmt: (t) => toComma(t, null), xlabel: "балл P(1)", ylabel: "доля своего класса" });
+  bins.forEach((h, k) => h.forEach((n, b) => {
+    hx.fillStyle = k ? c1 : c0; hx.globalAlpha = 0.55;
+    const x0 = g.px(b / B), x1 = g.px((b + 1) / B);
+    hx.fillRect(x0 + 1, g.py(n), x1 - x0 - 2, g.py(0) - g.py(n));
+  }));
+  hx.globalAlpha = 1;
+  hx.strokeStyle = css("--mark"); hx.lineWidth = 2; hx.beginPath(); hx.moveTo(g.px(t), g.mt); hx.lineTo(g.px(t), g.mt + g.H); hx.stroke();
+
+  const curve = (id, pts, cur, xl, yl, diag) => {
+    const cv = $(id), cx = cv.getContext("2d");
+    cx.clearRect(0, 0, cv.width, cv.height);
+    const f = frame(cv, [0, 1], [0, 1], { margin: [40, 28, 14, 42] });
+    axes(cx, f, { xticks: [0, 0.5, 1], yticks: [0, 0.5, 1], fmt: (t) => toComma(t, null), xlabel: xl, ylabel: yl });
+    if (diag !== null) polyline(cx, [[f.px(0), f.py(diag[0])], [f.px(1), f.py(diag[1])]], css("--text-2"), 1, [4, 4]);
+    polyline(cx, pts.map(([a, b]) => [f.px(a), f.py(b)]), css("--c0"), 2.5);
+    dot(cx, f.px(cur[0]), f.py(cur[1]), css("--c1m"), { r: 6 });
+  };
+  curve("roc", roc.fpr.map((v, i) => [v, roc.tpr[i]]), [c.fpr, c.recall], "FPR", "TPR = recall", [0, 1]);
+  const base = y.filter((v) => v === 1).length / y.length;
+  curve("pr", [[0, 1], ...pr], [c.recall, c.precision], "recall", "precision", [base, base]);
+
+  $("cm").innerHTML =
+    `<div></div><div class="h">объявлен 1</div><div class="h">объявлен 0</div>` +
+    `<div class="h">на деле 1</div><div class="tp">TP ${c.tp}</div><div class="fn">FN ${c.fn}</div>` +
+    `<div class="h">на деле 0</div><div class="fp">FP ${c.fp}</div><div class="tn">TN ${c.tn}</div>`;
+  const f1 = c.precision + c.recall ? (2 * c.precision * c.recall) / (c.precision + c.recall) : 0;
+  $("score").innerHTML =
+    `<span>Accuracy</span><span>${toComma((c.tp + c.tn) / y.length, 3)}</span>` +
+    `<span>Precision</span><span>${toComma(c.precision, 3)}</span>` +
+    `<span>Recall (TPR)</span><span>${toComma(c.recall, 3)}</span>` +
+    `<span>FPR</span><span>${toComma(c.fpr, 3)}</span>` +
+    `<span>F1</span><span>${toComma(f1, 3)}</span>` +
+    `<span>ROC-AUC</span><span>${toComma(S.auc, 3)}</span>`;
+}
+
+["ds", "deg", "imb"].forEach((id) => $(id).addEventListener("input", () => { S = setup(); draw(); }));
+$("t").addEventListener("input", draw);
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

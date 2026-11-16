@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница уравнений второго рода</title>
+<style>
+/*COMMON_CSS*/
+.panel input[type=text] { font-size: 13px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mrow { display: grid; gap: 4px; }
+.mrow > label.chk { display: flex; gap: 6px; align-items: center; color: var(--text); }
+.mrow input[type=checkbox] { margin: 0; width: auto; }
+.mopts { display: grid; gap: 4px; padding-left: 22px; }
+.mopts select { font-size: 13px; padding: 3px; }
+.mopts[hidden] { display: none; }
+.mtab td, .mtab th { white-space: nowrap; }
+.sq { aspect-ratio: 1; max-width: 420px; width: 100%; justify-self: start; }
+.sw { display: inline-block; width: 18px; height: 0; border-top: 3px solid currentColor; vertical-align: middle; margin-right: 5px; }
+.sw.dash { border-top-style: dashed; }
+.sw.dot { border-top-style: dotted; }
+.stale { opacity: 0.4; }
+.refline { color: var(--text-2); font-size: 13px; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница уравнений второго рода</h1>
+  <p class="lead">Уравнение Фредгольма y(x) − λ∫<sub>a</sub><sup>b</sup>K(x,s)y(s)ds = f(x) или Вольтерра с верхним пределом x. Введи ядро, правую часть и отрезок, выбери методы и смотри, как узлы, матрица системы и погрешность зависят от числа неизвестных N</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Готовая задача</h2>
+        <select id="preset" aria-label="Готовая задача"></select>
+      </div>
+      <div class="sec">
+        <h2>Уравнение</h2>
+        <label>Тип
+          <select id="kind"><option value="fredholm">Фредгольм</option><option value="volterra">Вольтерра</option><option value="volterra-nonlinear">Вольтерра, нелинейное: K(x,s,y)</option></select>
+        </label>
+        <div class="two"><label>a<input id="lo" type="text" inputmode="decimal"></label><label>b<input id="hi" type="text" inputmode="decimal"></label></div>
+        <label>λ<input id="lam" type="text" inputmode="decimal"></label>
+        <label><span id="kernelName">K(x, s)</span><input id="kernel" type="text"></label>
+        <label>f(x)<input id="fx" type="text"></label>
+        <label>Точное решение y(x), если известно<input id="exact" type="text" placeholder="пусто: эталон считается численно"></label>
+        <p class="note">Формулы: числа, x и s, pi и e, знаки + − * / ^, скобки, функции sin cos tan exp log ln sqrt abs sh ch. Умножение пишется знаком *</p>
+        <p class="err" id="err" role="status"></p>
+      </div>
+      <div class="sec mrow">
+        <h2>Методы</h2>
+        <label class="chk"><input id="m_trap" type="checkbox"> Квадратуры, трапеции</label>
+        <label class="chk"><input id="m_simpson" type="checkbox"> Квадратуры, Симпсон</label>
+        <label class="chk"><input id="m_iter" type="checkbox"> Простая итерация</label>
+        <div class="mopts" id="o_iter"><label>Остановка: отношение приращения к норме меньше
+          <select id="tol"><option value="1e-4">10⁻⁴</option><option value="1e-8" selected>10⁻⁸</option><option value="1e-12">10⁻¹²</option></select></label></div>
+        <label class="chk"><input id="m_deg" type="checkbox"> Вырожденные ядра (ряд Тейлора по x)</label>
+        <div class="mopts" id="o_deg"><label>Центр разложения x₀<input id="center" type="text" inputmode="decimal" value="0"></label></div>
+        <label class="chk"><input id="m_gal" type="checkbox"> Галёркин–Петров</label>
+        <div class="mopts" id="o_gal">
+          <label>Координатные функции φ<select id="galPhi"><option value="legendre">Лежандр</option><option value="chebyshev">Чебышёв</option><option value="monomial">1, x, x², …</option></select></label>
+          <label>Проекционные функции ψ<select id="galPsi"><option value="same">те же (Бубнов–Галёркин)</option><option value="legendre">Лежандр</option><option value="chebyshev">Чебышёв</option><option value="monomial">1, x, x², …</option></select></label>
+          <label>Начальный элемент u₀<select id="galU0"><option value="zero">0</option><option value="f">f</option></select></label>
+        </div>
+        <label class="chk"><input id="m_col" type="checkbox"> Коллокация</label>
+        <div class="mopts" id="o_col">
+          <label>Координатные функции φ<select id="colPhi"><option value="legendre">Лежандр</option><option value="chebyshev">Чебышёв</option><option value="monomial">1, x, x², …</option></select></label>
+          <label>Узлы<select id="colNodes"><option value="equidistant">равноотстоящие</option><option value="chebyshev">Чебышёва</option></select></label>
+        </div>
+        <p class="note" id="mnote"></p>
+      </div>
+      <div class="sec">
+        <h2>Число неизвестных N</h2>
+        <div class="two"><label>от<input id="nlo" type="text" inputmode="numeric"></label><label>до<input id="nhi" type="text" inputmode="numeric"></label></div>
+        <p class="note">N — число узлов квадратуры, членов ряда, базисных функций. Симпсон берёт нечётные N</p>
+        <label>Подробно: метод<select id="detail"></select></label>
+        <label>Подробно: N<input id="ndet" type="text" inputmode="numeric"></label>
+      </div>
+    </div>
+    <div class="main">
+      <p class="warn" id="stale" role="status" hidden>Ввод с ошибкой: показаны прежние значения</p>
+      <div class="main" id="results">
+        <section>
+          <h2>Погрешность по N</h2>
+          <p class="warn" id="warn" role="status"></p>
+          <canvas id="errChart" class="wide" role="img" aria-label="График наибольшей погрешности по числу неизвестных, логарифмическая шкала"></canvas>
+          <div class="legend" id="legend"></div>
+          <p class="refline" id="refline"></p>
+          <div class="scroll"><table class="mtab" id="table"></table></div>
+          <p class="note" id="errNote"></p>
+        </section>
+        <section>
+          <h2>Решение и узлы</h2>
+          <p class="refline" id="detailLine"></p>
+          <canvas id="solChart" class="wide" role="img" aria-label="Решение и приближение с узлами"></canvas>
+          <div class="legend"><span><i style="background:var(--text-2)"></i>эталон</span><span><i id="approxSw" style="background:var(--c1)"></i>приближение</span><span><i style="background:var(--mark)"></i>узлы</span></div>
+        </section>
+        <section>
+          <h2>Матрица системы</h2>
+          <canvas id="matChart" class="sq" role="img" aria-label="Тепловая карта матрицы системы"></canvas>
+          <div class="score" id="matInfo"></div>
+          <p class="note" id="matNote"></p>
+        </section>
+        <section id="degSection" hidden>
+          <h2>Оценка теоремы для вырожденных ядер</h2>
+          <div class="score" id="degInfo"></div>
+          <p class="note" id="degNote"></p>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*CHART*/
+/*NMCORE*/
+/*PRESETS*/
+const CAPS = { quad: 80, iter: 60, deg: 14, gal: 24, col: 24 };
+const SAMPLES = 241;
+
+// ---- the methods: what each one builds for N unknowns, how its error is measured, how it is drawn
+
+const STYLE = {
+  trap: { role: "--c1", cls: "", width: 2.2 },
+  simpson: { role: "--c3", cls: "dash", width: 2, dash: [7, 4] },
+  iter: { role: "--c2", cls: "dot", width: 2, dash: [2, 3] },
+  deg: { role: "--c0", cls: "", width: 2.2 },
+  gal: { role: "--ddlc-skirt", cls: "", width: 2.2 },
+  col: { role: "--ddlc-monika", cls: "dash", width: 2, dash: [7, 4] },
+};
+// one colour per method on the error chart, the table header and the solution chart; the dash is the second sign
+
+function methodList(p, ctx) {
+  const quad = (rule) => (n) => (p.volterra ? quadratureVolterra(p, n, rule) : quadratureFredholm(p, n, rule));
+  const list = [
+    { id: "trap", name: "Трапеции", cap: CAPS.quad, nodewise: true, ok: (n) => n >= 2, make: () => quad("trapezoid") },
+    { id: "simpson", name: "Симпсон", cap: CAPS.quad, nodewise: true, ok: (n) => n >= 3 && (p.volterra || n % 2 === 1), make: () => quad("simpson") },
+    { id: "iter", name: "Простая итерация", cap: CAPS.iter, nodewise: true, ok: (n) => n >= 2, make: () => (n) => simpleIteration(p, n, { tol: ctx.tol }) },
+    { id: "deg", name: "Вырожденные ядра", cap: CAPS.deg, nodewise: false, ok: (n) => n >= 1 && !p.volterra, make: () => (n) => degenerateKernel(p, n, { center: ctx.center }) },
+    { id: "gal", name: "Галёркин–Петров", cap: CAPS.gal, nodewise: false, ok: (n) => n >= 1 && !p.volterra, make: (nmax) => {
+      const series = galerkinSeries(p, nmax, { phi: basisFunctions(ctx.galPhi, nmax, p.lo, p.hi), psi: basisFunctions(ctx.galPsi, nmax, p.lo, p.hi), u0: ctx.galU0 });
+      return (n) => series.solution(n);
+    } },
+    { id: "col", name: "Коллокация", cap: CAPS.col, nodewise: false, ok: (n) => n >= 1 && !p.volterra, make: () => (n) => collocation(p, basisFunctions(ctx.colPhi, n, p.lo, p.hi), collocationNodes(ctx.colNodes, n, p.lo, p.hi)) },
+  ];
+  return list;
+}
+
+function measure(m, sol, p, ref) {
+  return m.nodewise ? nodeError(sol, ref.at) : maxError(sol.at, ref.at, p.lo, p.hi, 401);
+}
+
+// ---- reading the form
+
+const FIELD = { kernel: ["kernel", "Ядро"], f: ["fx", "Правая часть f(x)"], exact: ["exact", "Точное решение"], interval: ["lo", "Отрезок"], lambda: ["lam", "λ"] };
+
+function readConst(id, what) {
+  const el = $(id);
+  try { const v = evalConstant(el.value); el.removeAttribute("aria-invalid"); return v; } catch (e) { el.setAttribute("aria-invalid", "true"); e.place = what; throw e; }
+}
+
+function readInteger(id, what, lo, hi) {
+  const el = $(id), v = Number(String(el.value).trim());
+  if (!Number.isInteger(v) || v < lo || v > hi) { el.setAttribute("aria-invalid", "true"); throw new Error(`${what}: целое число от ${lo} до ${hi}`); }
+  el.removeAttribute("aria-invalid");
+  return v;
+}
+
+function readProblem() {
+  document.querySelectorAll(".panel input").forEach((el) => el.removeAttribute("aria-invalid"));
+  const lo = readConst("lo", "Отрезок, a"), hi = readConst("hi", "Отрезок, b"), lambda = readConst("lam", "λ");
+  const center = readConst("center", "Центр разложения x₀");
+  try {
+    return { p: makeProblem({ kind: $("kind").value, lo, hi, lambda, kernel: $("kernel").value, f: $("fx").value, exact: $("exact").value }), center };
+  } catch (e) {
+    const [id, place] = FIELD[e.field] || [null, "Формула"];
+    if (id) $(id).setAttribute("aria-invalid", "true");
+    e.place = place;
+    throw e;
+  }
+}
+
+function readOptions() {
+  const ctx = {
+    tol: Number($("tol").value), galPhi: $("galPhi").value, galU0: $("galU0").value, colPhi: $("colPhi").value, colNodes: $("colNodes").value,
+  };
+  ctx.galPsi = $("galPsi").value === "same" ? ctx.galPhi : $("galPsi").value;
+  return ctx;
+}
+
+// ---- state kept between redraws
+
+let timer = 0, lastKey = "", ref = null;
+const schedule = () => { clearTimeout(timer); timer = setTimeout(update, 150); };
+const num = (x) => sciText(x);
+
+function markStale(on) {
+  $("stale").hidden = !on;
+  $("results").classList.toggle("stale", on);
+}
+
+function showError(e) {
+  $("err").textContent = e instanceof ExprError ? describe(e) : (e.place ? `${e.place}: ${e.message}` : e.message);
+}
+
+// ---- the update
+
+function update() {
+  let prob, nlo, nhi, ndet, ctx;
+  try {
+    prob = readProblem();
+    ctx = readOptions();
+    nlo = readInteger("nlo", "N от", 1, 200);
+    nhi = readInteger("nhi", "N до", nlo, 200);
+    ndet = readInteger("ndet", "Подробно, N", 1, 200);
+    $("err").textContent = "";
+  } catch (e) {
+    showError(e);
+    markStale(true);
+    return;
+  }
+  markStale(false);
+  const { p } = prob;
+  ctx.center = prob.center;
+  $("kernelName").textContent = p.nonlinear ? "K(x, s, y)" : "K(x, s)";
+  syncAvailability(p);
+  const warnings = [];
+  const key = JSON.stringify([$("kind").value, $("lo").value, $("hi").value, $("lam").value, $("kernel").value, $("fx").value, $("exact").value]);
+  if (key !== lastKey) {
+    try { ref = referenceSolution(p); lastKey = key; } catch (e) {
+      ref = null; lastKey = "";
+      $("err").textContent = `Эталон не построен: ${describe(e)}`;
+      markStale(true);
+      return;
+    }
+  }
+  const methods = methodList(p, ctx).filter((m) => $(`m_${m.id}`).checked && m.ok(Math.max(nlo, 3)) && m.ok(3));
+  const results = {};
+  for (const m of methods) {
+    const top = Math.min(nhi, m.cap);
+    let solve;
+    try { solve = m.make(top); } catch (e) { warnings.push(`${m.name}: ${describe(e)}`); results[m.id] = []; continue; }
+    const rows = [];
+    for (let n = nlo; n <= top; n++) {
+      if (!m.ok(n)) continue;
+      try {
+        const sol = solve(n);
+        if (m.id === "deg" && rows.length && sol.n === rows[rows.length - 1].n) break;
+        rows.push({ n: sol.n, requested: n, err: measure(m, sol, p, ref), cond: sol.cond, iterations: sol.iterations, converged: sol.converged, diverged: sol.diverged, sol });
+        if (m.id === "deg" && sol.exhausted) break;
+      } catch (e) {
+        if (!(e instanceof ProblemError) && !(e instanceof EvalError)) throw e;
+        rows.push({ n, err: NaN, cond: NaN, failed: e.message, failedCode: e.code });
+        if (warnings.length < 4) warnings.push(`${m.name}, N = ${n}: ${describe(e)}`);
+      }
+    }
+    if (nhi > m.cap) warnings.push(`${m.name}: считаю до N = ${m.cap}`);
+    results[m.id] = rows;
+  }
+  $("warn").textContent = warnings.join(". ");
+  const active = methods.filter((m) => results[m.id] && results[m.id].length);
+  drawErrorChart(active, results, nlo, nhi, ndet);
+  fillTable(active, results);
+  fillDetail(p, ctx, active, results, ndet);
+  $("refline").innerHTML = ref.exact ? "Эталон: точная формула из поля «Точное решение»"
+    : ref.err < 1e-14 ? "Эталон: численное решение, оно совпало с расчётом вдвое мельче до 10<sup>−14</sup>"
+    : `Эталон: численное решение, оно отличается от расчёта вдвое мельче на ${sciHtml(ref.err)}. Погрешности меньше этого числа не различимы`;
+}
+
+// ---- which methods the equation allows
+
+function syncAvailability(p) {
+  const fred = !p.volterra;
+  for (const id of ["deg", "gal", "col"]) {
+    const box = $(`m_${id}`);
+    box.disabled = !fred;
+    box.closest("label").style.opacity = fred ? "" : "0.45";
+    $(`o_${id}`).hidden = !fred || !box.checked;
+  }
+  $("o_iter").hidden = !$("m_iter").checked;
+  $("mnote").textContent = fred ? "" : "Вырожденные ядра, Галёркин–Петров и коллокация выбираются для уравнения Фредгольма";
+  const sel = $("detail"), keep = sel.value;
+  const names = { trap: "Трапеции", simpson: "Симпсон", iter: "Простая итерация", deg: "Вырожденные ядра", gal: "Галёркин–Петров", col: "Коллокация" };
+  const ids = Object.keys(names).filter((id) => $(`m_${id}`).checked && !$(`m_${id}`).disabled);
+  sel.innerHTML = ids.map((id) => `<option value="${id}">${names[id]}</option>`).join("");
+  if (ids.includes(keep)) sel.value = keep;
+}
+
+// ---- the error chart and the table
+
+function swatch(id) {
+  const st = STYLE[id];
+  return `<span style="color:var(${st.role})"><i class="sw ${st.cls}"></i>${{ trap: "трапеции", simpson: "Симпсон", iter: "простая итерация", deg: "вырожденные ядра", gal: "Галёркин–Петров", col: "коллокация" }[id]}</span>`;
+}
+
+function drawErrorChart(active, results, nlo, nhi, ndet) {
+  const cv = $("errChart");
+  if (!active.length) {
+    cv.hidden = true; $("legend").innerHTML = ""; $("errNote").textContent = "Отметь хотя бы один метод";
+    return;
+  }
+  cv.hidden = false;
+  const series = active.map((m) => {
+    const rows = results[m.id];
+    const st = STYLE[m.id];
+    return { xs: rows.map((r) => r.n), ys: rows.map((r) => (r.err > 0 && r.err < 1e6 ? r.err : NaN)), color: css(st.role), width: st.width, dash: st.dash, dots: 2.5 };
+  });
+  const [lo, hi] = logRange(series.map((s) => s.ys));
+  const xs = series.flatMap((s) => s.xs);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  plotLines(cv, {
+    series, xlim: [x0, x1 > x0 ? x1 : x0 + 1], ylim: [Math.max(lo, 1e-17), hi], ylog: true,
+    vlines: ndet >= x0 && ndet <= x1 ? [{ x: ndet, color: css("--text-2") }] : [],
+  });
+  $("legend").innerHTML = active.map((m) => swatch(m.id)).join("");
+  const flagged = active.some((m) => results[m.id].some((r) => r.cond > 1e12));
+  $("errNote").textContent = "Квадратуры дают погрешность в узлах, остальные методы — наибольшую по 401 точке отрезка. Ниже 10⁻¹⁴ идёт шум округления; у плохо обусловленных систем он выше. Погрешности выше 10⁶ на графике не показаны"
+    + (flagged ? ". Звёздочка: cond₁ больше 10¹², система почти вырождена, цифры ненадёжны" : "");
+}
+
+function fillTable(active, results) {
+  const ns = [...new Set(active.flatMap((m) => results[m.id].map((r) => r.n)))].sort((a, b) => a - b);
+  const names = { trap: "Трапеции", simpson: "Симпсон", iter: "Итерация", deg: "Вырожд. ядра", gal: "Галёркин–Петров", col: "Коллокация" };
+  const head = `<thead><tr><th>N</th>${active.map((m) => `<th style="color:var(${STYLE[m.id].role})">${names[m.id]}</th>`).join("")}</tr></thead>`;
+  const cell = (m, n) => {
+    const r = results[m.id].find((q) => q.n === n);
+    if (!r) return "—";
+    if (r.failed) return r.failedCode === "singular" ? "вырождена" : "не решается";
+    const err = (r.err > 0 ? sciHtml(r.err) : "0") + (r.cond > 1e12 ? "*" : "");
+    if (m.id === "iter") return r.diverged ? "расходится" : `${err} (${r.iterations}${r.converged ? "" : ", не сошлась"})`;
+    return err;
+  };
+  $("table").innerHTML = head + `<tbody>${ns.map((n) => `<tr><td>${n}</td>${active.map((m) => `<td>${cell(m, n)}</td>`).join("")}</tr>`).join("")}</tbody>`;
+}
+
+// ---- the detail: solution with nodes, the matrix, the estimate of the theorem
+
+function detailSolution(p, ctx, m, results, ndet) {
+  const n = m.id === "simpson" && !p.volterra && ndet % 2 === 0 ? ndet + 1 : ndet;
+  const have = results[m.id].find((r) => r.n === n && r.sol);
+  if (have) return have.sol;
+  const top = Math.max(n, 1);
+  if (m.id === "gal") {
+    return galerkinSeries(p, top, { phi: basisFunctions(ctx.galPhi, top, p.lo, p.hi), psi: basisFunctions(ctx.galPsi, top, p.lo, p.hi), u0: ctx.galU0 }).solution(n);
+  }
+  return m.make(top)(n);
+}
+
+function fillDetail(p, ctx, active, results, ndet) {
+  const info = $("matInfo");
+  const methods = methodList(p, ctx);
+  const m = methods.find((q) => q.id === $("detail").value);
+  $("degSection").hidden = true;
+  if (!m || !results[m.id] || !results[m.id].length) {
+    $("detailLine").textContent = "Отметь метод, чтобы увидеть решение и матрицу";
+    $("solChart").hidden = true; $("matChart").hidden = true; info.innerHTML = ""; $("matNote").textContent = "";
+    return;
+  }
+  let sol;
+  try { sol = detailSolution(p, ctx, m, results, Math.min(ndet, m.cap)); } catch (e) {
+    $("detailLine").textContent = `${m.name}, N = ${ndet}: ${describe(e)}`;
+    $("solChart").hidden = true; $("matChart").hidden = true; info.innerHTML = ""; $("matNote").textContent = "";
+    return;
+  }
+  const err = measure(m, sol, p, ref);
+  $("detailLine").innerHTML = `${m.name}, N = ${sol.n}: наибольшая погрешность ${sciHtml(err)}`;
+  const color = `var(${STYLE[m.id].role})`;
+  $("approxSw").style.background = color;
+  // the solution
+  const xs = Array.from({ length: SAMPLES }, (_, i) => p.lo + (i + 0.5) / SAMPLES * (p.hi - p.lo));
+  const yref = xs.map((x) => { try { return ref.at(x); } catch { return NaN; } });
+  let yapp, nodesX = [], nodesY = [];
+  if (sol.at) {
+    yapp = xs.map((x) => { try { return sol.at(x); } catch { return NaN; } });
+    if (sol.nodes) { nodesX = Array.from(sol.nodes); nodesY = nodesX.map((x) => sol.at(x)); }
+  } else {
+    yapp = null; nodesX = Array.from(sol.nodes); nodesY = Array.from(sol.y);
+  }
+  const mcolor = css(STYLE[m.id].role);
+  const series = [{ xs, ys: yref, color: css("--text-2"), width: 3 }];
+  if (yapp) series.push({ xs, ys: yapp, color: mcolor, width: 1.8, dash: STYLE[m.id].dash });
+  else series.push({ xs: nodesX, ys: nodesY, color: mcolor, width: 1.8, dash: STYLE[m.id].dash });
+  const nodeDots = nodesX.length && nodesX.length <= 60 ? nodesX.map((x, i) => ({ x, y: nodesY[i], color: css("--mark"), filled: true })) : [];
+  $("solChart").hidden = false;
+  plotLines($("solChart"), { series, xlim: [p.lo, p.hi], ylim: yRange([yref, nodesY, yapp || []].map((a) => Array.from(a).filter((v) => Math.abs(v) < 1e6))), points: nodeDots });
+  // the matrix
+  const mat = sol.matrix;
+  if (mat) {
+    $("matChart").hidden = false;
+    drawMatrix($("matChart"), mat, sol.n);
+    const q = sol.n;
+    info.innerHTML = [
+      ["Размер", `${q}×${q}`],
+      ["Число обусловленности cond₁", sol.cond === null || sol.cond === undefined ? "—" : sol.cond > 1e15 ? "больше 10<sup>15</sup>" : sciHtml(sol.cond)],
+    ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join("");
+    $("matNote").textContent = matrixNote(m.id, p, sol);
+  } else {
+    $("matChart").hidden = true; info.innerHTML = "";
+    $("matNote").textContent = "Система нелинейная: на каждом шаге решается скалярное уравнение, матрицы нет";
+  }
+  if (m.id === "deg") fillDegenerate(p, sol, ref);
+}
+
+function matrixNote(id, p, sol) {
+  const k = { trap: p.volterra ? "I − λ·A∘K, нижняя треугольная: подстановка сверху вниз" : "I − λKD, вес A_j умножает столбец j", simpson: p.volterra ? "I − λ·A∘K, нижняя треугольная; чётные строки считают последний промежуток трапецией" : "I − λKD с весами Симпсона",
+    iter: "I − λKD на сетке трапеций: итерации сходятся к решению этой системы", deg: "I − λa, где a_ij = ∫β_iα_j ds", gal: "G_ij = (φ_j, ψ_i) − λ(Kφ_j, ψ_i)", col: "M_ij = φ_j(x_i) − λ∫K(x_i, s)φ_j(s)ds" }[id];
+  const tail = sol.cond > 1e12 ? ". Система почти вырождена: решение теряет цифры" : "";
+  return `${k}. Цвет — знак, насыщенность — модуль элемента${tail}`;
+}
+
+function mix(a, b, t) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
+}
+
+function drawMatrix(cv, M, n) {
+  const size = Math.max(240, Math.min(420, cv.getBoundingClientRect().width || 420));
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, size, size);
+  let top = 0;
+  for (const v of M) if (Number.isFinite(v)) top = Math.max(top, Math.abs(v));
+  const cell = size / n, base = css("--surface"), pos = css("--c0"), neg = css("--c1"), ink = css("--text");
+  g.font = `500 ${Math.max(9, Math.min(13, cell / 3.2))}px ${getComputedStyle(document.body).fontFamily}`;
+  g.textAlign = "center"; g.textBaseline = "middle";
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const v = M[i * n + j], t = top > 0 && Number.isFinite(v) ? Math.sqrt(Math.abs(v) / top) : 0;
+      g.fillStyle = mix(base, v < 0 ? neg : pos, 0.08 + 0.85 * t);
+      g.fillRect(j * cell, i * cell, cell, cell);
+      if (n <= 6) { g.fillStyle = t > 0.6 ? base : ink; g.fillText(num(v), (j + 0.5) * cell, (i + 0.5) * cell); }
+    }
+  }
+}
+
+function fillDegenerate(p, sol, ref) {
+  let yNorm = 0;
+  for (let i = 0; i < 81; i++) { const v = Math.abs(ref.at(p.lo + (p.hi - p.lo) * (i + 0.5) / 81)); if (Number.isFinite(v)) yNorm = Math.max(yNorm, v); }
+  const b = degenerateBound(p, sol, yNorm);
+  $("degSection").hidden = false;
+  const rows = [
+    ["Члены ряда: степени x − x₀", sol.degrees.join(", ")],
+    ["‖A‖ = max∫|K|ds", sciHtml(b.normA)],
+    ["‖A − A_M‖", sciHtml(b.normDiff)],
+    ["q = |λ|‖A − A_M‖ / (1 − |λ|‖A‖)", b.q === null ? "—, |λ|‖A‖ ≥ 1" : sciHtml(b.q)],
+    ["Оценка q/(1 − q)·‖y‖", b.bound === null ? "—" : sciHtml(b.bound)],
+  ];
+  $("degInfo").innerHTML = rows.map(([a, c]) => `<span>${a}</span><span>${c}</span>`).join("");
+  $("degNote").textContent = sol.exhausted ? "Ряд закончился: ядро конечного ранга, метод точен" : b.bound === null ? "Оценка теоремы применима при |λ|‖A‖ < 1 и q < 1" : "Оценка завышает погрешность на множитель ‖T⁻¹‖, но верно передаёт скорость";
+}
+
+// ---- presets and events
+
+const METHOD_IDS = ["trap", "simpson", "iter", "deg", "gal", "col"];
+PRESETS.forEach((q, i) => { const o = document.createElement("option"); o.value = i; o.textContent = q.name; $("preset").appendChild(o); });
+
+function applyPreset(q) {
+  $("kind").value = q.kind; $("lo").value = q.lo; $("hi").value = q.hi; $("lam").value = q.lambda;
+  $("kernel").value = q.kernel; $("fx").value = q.f; $("exact").value = q.exact || "";
+  METHOD_IDS.forEach((id) => { $(`m_${id}`).checked = q.methods.includes(id); });
+  const o = q.opts || {};
+  $("center").value = o.center || "0"; $("tol").value = o.tol || "1e-8";
+  $("galPhi").value = o.galPhi || "legendre"; $("galPsi").value = o.galPsi || "same"; $("galU0").value = o.galU0 || "zero";
+  $("colPhi").value = o.colPhi || "legendre"; $("colNodes").value = o.colNodes || "equidistant";
+  $("nlo").value = q.nlo; $("nhi").value = q.nhi; $("ndet").value = q.ndet;
+  syncAvailability({ volterra: q.kind !== "fredholm" });
+  $("detail").value = q.detail;
+}
+
+$("preset").addEventListener("input", () => { applyPreset(PRESETS[+$("preset").value]); lastKey = ""; update(); });
+for (const id of ["lo", "hi", "lam", "kernel", "fx", "exact", "center", "nlo", "nhi", "ndet"]) $(id).addEventListener("input", schedule);
+for (const id of ["kind", "tol", "galPhi", "galPsi", "galU0", "colPhi", "colNodes", "detail", ...METHOD_IDS.map((m) => `m_${m}`)]) $(id).addEventListener("input", update);
+window.addEventListener("resize", update);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+
+applyPreset(PRESETS[0]);
+update();
+</script>
+</body>
+</html>

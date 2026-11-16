@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница градиентного спуска</title>
+<style>
+/*COMMON_CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница градиентного спуска</h1>
+  <p class="lead">Фон — линии уровня функции потерь: чем насыщеннее полоса, тем больше потери, крестик — минимум. Линия — траектория спуска из стартовой точки; щелчок по полю переносит старт</p>
+  <div class="wrap">
+    <canvas id="cv" class="square" width="640" height="640" aria-label="Траектория спуска"></canvas>
+    <div class="panel">
+      <label>Функция потерь
+        <select id="fn">
+          <option value="ellipse">Вытянутый овраг: x² + 10y²</option>
+          <option value="round">Круглая чаша: x² + y²</option>
+          <option value="rosen">Розенброк: (1 − x)² + 10(y − x²)²</option>
+        </select>
+      </label>
+      <label>Метод
+        <select id="method">
+          <option value="gd">Градиентный спуск</option>
+          <option value="momentum">Momentum</option>
+          <option value="nesterov">Nesterov</option>
+        </select>
+      </label>
+      <label>Шаг η = <b id="lrv"></b>
+        <input id="lr" type="range" min="-3" max="0" step="0.001" value="-1.3">
+      </label>
+      <label>Инерция μ = <b id="muv"></b>
+        <input id="mu" type="range" min="0" max="0.98" step="0.01" value="0.9">
+      </label>
+      <label>Число шагов: <b id="sv"></b>
+        <input id="steps" type="range" min="1" max="200" value="50">
+      </label>
+      <div class="score" id="score"></div>
+      <p class="note">На овраге x² + 10y² обычный спуск при большом шаге скачет поперёк оврага: устойчивость требует η &lt; 2/20 = 0,1 из-за крутой оси y. Momentum гасит скачки и разгоняется вдоль пологой оси</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const FN = SURFACES;
+let start = null;
+const cv = $("cv"), ctx = cv.getContext("2d");
+
+function draw() {
+  const fn = FN[$("fn").value], method = $("method").value;
+  const lr = 10 ** +$("lr").value, mu = +$("mu").value, steps = +$("steps").value;
+  $("lrv").textContent = num(lr); $("muv").textContent = method === "gd" ? "—" : toComma(mu, 2); $("sv").textContent = steps;
+  $("mu").disabled = method === "gd";
+  const s = start || fn.start;
+  const f = frame(cv, fn.box, fn.box, { margin: [30, 10, 10, 26], equal: true });
+
+  levelBands(ctx, f, fn.f);
+  axes(ctx, f, { xticks: [fn.box[0], 0, fn.box[1]], yticks: [Math.round(f.y0), 0, Math.round(f.y1)] });
+
+  const path = gdPath(fn.g, s, { lr, steps, momentum: method === "gd" ? 0 : mu, nesterov: method === "nesterov" });
+  const end = path[path.length - 1];
+  // Diverged: the loss grew a thousandfold from the start, or overflowed.
+  const blown = !end.every(Number.isFinite) || fn.f(end) > 1e3 * Math.max(fn.f(s), 1);
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  const pts = path.filter((p) => p.every(Number.isFinite) && Math.hypot(p[0], p[1]) < 1e6).map((p) => [f.px(p[0]), f.py(p[1])]);
+  polyline(ctx, pts, css("--c1m"), 2);
+  pts.forEach(([x, y], k) => dot(ctx, x, y, css("--c1m"), { r: k === 0 ? 5 : 2.5 }));
+  const [mx, my] = [f.px(fn.min[0]), f.py(fn.min[1])];
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(mx - 6, my - 6); ctx.lineTo(mx + 6, my + 6); ctx.moveTo(mx + 6, my - 6); ctx.lineTo(mx - 6, my + 6); ctx.stroke();
+  ctx.restore();
+
+  $("score").innerHTML =
+    `<span>Потери в начале</span><span>${num(fn.f(s))}</span>` +
+    `<span>Потери в конце</span><span>${blown ? "расходится" : num(fn.f(end))}</span>` +
+    `<span>Расстояние до минимума</span><span>${blown ? "∞" : num(Math.hypot(end[0] - fn.min[0], end[1] - fn.min[1]))}</span>`;
+  cv._frame = f;
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  const r = cv.getBoundingClientRect(), f = cv._frame;
+  start = [f.dx(((e.clientX - r.left) / r.width) * cv.width), f.dy(((e.clientY - r.top) / r.height) * cv.height)];
+  draw();
+});
+["fn", "method", "lr", "mu", "steps"].forEach((id) => $(id).addEventListener("input", () => { if (id === "fn") start = null; draw(); }));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

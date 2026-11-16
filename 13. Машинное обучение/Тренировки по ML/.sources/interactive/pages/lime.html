@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница LIME</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; min-width: 0; }
+.plots > * { min-width: 0; }
+.wrap { grid-template-columns: minmax(0, 1fr) 330px; }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+.score span:nth-child(even) { white-space: nowrap; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+.legend span { white-space: nowrap; }
+.legend .sw { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 5px; border-top: 2.5px solid var(--text); }
+.legend .sw.dash { border-top-style: dashed; }
+.legend .sw.dot { border-top-style: dotted; }
+.legend .sw.thin { border-top-width: 1.5px; }
+.legend .ring { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 5px; border: 1.5px solid var(--text-2); background: color-mix(in srgb, var(--text) 30%, transparent); }
+.legend .pin { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 5px; background: var(--mark); }
+button:disabled { opacity: 0.45; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница LIME</h1>
+  <p class="lead">Чёрный ящик f обучен на двух лунах. Щёлкни по точке, чтобы объяснить её предсказание: вокруг неё рассыпаются возмущения z = x + s·ε (s — стандартное отклонение признака, ε — стандартная нормаль), каждое весит по ядру от расстояния до x</p>
+  <p class="lead">По возмущениям взвешенным МНК подгоняется прямая g(z) = a + w·(z − x). Расстояние для веса считается по стандартизованным признакам, как в пакете lime. Объяснение — вектор w; рядом показан градиент самой модели в той же точке</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" class="square" width="680" height="680" aria-label="Облако возмущений и локальная прямая"></canvas>
+      <div class="legend" id="legend">
+        <span><i class="ring"></i>возмущение, площадь ∝ вес ядра</span>
+        <span><i class="sw thin"></i>граница модели f = 0,5</span>
+        <span><i class="sw dash"></i>локальная прямая g = 0,5</span>
+        <span><i class="sw dot"></i>линеаризация f по градиенту</span>
+        <span><i class="pin"></i>объясняемый объект</span>
+      </div>
+      <div class="two">
+        <canvas id="zoom" class="square" width="360" height="360" aria-label="Окрестность объекта"></canvas>
+        <canvas id="curves" class="square" width="360" height="360" aria-label="R² и угол к градиенту против ширины ядра"></canvas>
+      </div>
+      <div id="curveNote"></div>
+    </div>
+    <div class="panel">
+      <label>Модель
+        <select id="model">
+          <option value="forest">Случайный лес</option>
+          <option value="boost">Градиентный бустинг</option>
+          <option value="mlp">Нейронная сеть (гладкая f)</option>
+        </select>
+      </label>
+      <label>Ширина ядра σ: <b id="sv"></b>
+        <input id="sigma" type="range" step="0.01">
+      </label>
+      <label>Число возмущений n: <b id="nv"></b>
+        <input id="nn" type="range" min="0" step="1">
+      </label>
+      <div class="two" style="gap:8px">
+        <button id="resample">Пересэмплировать</button>
+        <button id="defw">σ по умолчанию</button>
+      </div>
+      <div class="score" id="facts"></div>
+      <div id="about"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d"), zv = $("zoom"), zx = zv.getContext("2d"), cc = $("curves"), cx = cc.getContext("2d");
+const D = DATA.moons, P = 2;
+const MEAN = [0, 1].map((j) => D.Xtr.reduce((s, r) => s + r[j], 0) / D.Xtr.length);
+// Standard deviation of every training column: the scale of the perturbations and of the distance.
+const SCALE = [0, 1].map((j) => Math.sqrt(D.Xtr.reduce((s, r) => s + (r[j] - MEAN[j]) ** 2, 0) / D.Xtr.length));
+const SIGMA_LO = 0.1, SIGMA_HI = 3, SIGMA_DEFAULT = limeDefaultWidth(P);
+const N_LEVELS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000], N_DEFAULT = 500;
+const MLP_STEPS = 600, MLP_LR = 1;
+const ZOOM_HALF = 0.45, CURVE_POINTS = 40, DOT_R = 9, PICK_PX = 14;
+const state = { x: null, label: "", seed: 1 };
+const models = {}, clouds = new Map(), bgCache = new Map();
+
+const fmt = (v, d = 2) => { const a = Math.abs(v); return (v < 0 && +a.toFixed(d) !== 0 ? "−" : "") + toComma(a, d); };
+
+function getModel(name) {
+  if (!models[name]) {
+    if (name === "forest") {
+      const m = fitForest(D.Xtr, D.ytr, { nTrees: 100, maxFeatures: 1, minLeaf: 3, seed: 1 });
+      models[name] = { f: (x) => forestProba(m, x)[1], h: 0.1, kind: "вероятность класса 1 (доли классов в листьях, среднее по деревьям)", steps: true };
+    } else if (name === "boost") {
+      const m = fitBoosting(D.Xtr, D.ytr, { nEstimators: 100, lr: 0.1, maxDepth: 3 });
+      models[name] = { f: (x) => boostingPredict(m, x), h: 0.1, kind: "предсказание регрессии на метки 0 и 1", steps: true };
+    } else {
+      let net = mlpInit([8], "tanh", 1);
+      for (let i = 0; i < MLP_STEPS; i++) net = mlpStep(net, D.Xtr, D.ytr, MLP_LR);
+      models[name] = { f: (x) => mlpProba(net, x), h: 1e-3, kind: "вероятность класса 1 (сигмоида логита сети)", steps: false };
+    }
+    const f = models[name].f, acc = (X, y) => accuracy(X.map((x) => (f(x) > 0.5 ? 1 : 0)), y);
+    models[name].accTr = acc(D.Xtr, D.ytr); models[name].accTe = acc(D.Xte, D.yte);
+  }
+  return models[name];
+}
+
+// The explained object by default: the held-out one whose f is closest to 0.5, as in the note.
+function defaultObject(f) {
+  let best = 0;
+  D.Xte.forEach((x, i) => { if (Math.abs(f(x) - 0.5) < Math.abs(f(D.Xte[best]) - 0.5)) best = i; });
+  return { x: D.Xte[best].slice(), label: `тест №${best + 1}` };
+}
+
+const sigmaNow = () => 10 ** +$("sigma").value;
+const nNow = () => N_LEVELS[+$("nn").value];
+
+// The cloud and the model's values on it do not depend on σ: changing σ only reweights it.
+function getCloud(model, n) {
+  const key = [model, state.x.join(","), n, state.seed].join("|");
+  if (!clouds.has(key)) {
+    if (clouds.size > 24) clouds.delete(clouds.keys().next().value);
+    const { E, Z } = limeSample(state.x, SCALE, n, state.seed);
+    const f = getModel(model).f;
+    clouds.set(key, { E, Z, t: Z.map(f) });
+  }
+  return clouds.get(key);
+}
+
+const isDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+
+function background(name, view, data, N, keyExtra) {
+  const key = [name, N, keyExtra, isDark()].join("|");
+  if (!bgCache.has(key)) {
+    if (bgCache.size > 12) bgCache.delete(bgCache.keys().next().value);
+    const off = document.createElement("canvas");
+    off.width = view.W; off.height = view.W;
+    const f = getModel(name).f;
+    drawClassifier(off.getContext("2d"), view, data, (x) => { const p = Math.min(1, Math.max(0, f(x))); return [1 - p, p]; }, [0, 1], { N });
+    bgCache.set(key, off);
+  }
+  return bgCache.get(key);
+}
+
+function zoomView() {
+  const lo = state.x.map((v) => v - ZOOM_HALF), hi = state.x.map((v) => v + ZOOM_HALF), W = zv.width;
+  return {
+    lo, hi, W,
+    toPx: (p) => [((p[0] - lo[0]) / (hi[0] - lo[0])) * W, W - ((p[1] - lo[1]) / (hi[1] - lo[1])) * W],
+    toX: (px, py) => [lo[0] + (px / W) * (hi[0] - lo[0]), lo[1] + ((W - py) / W) * (hi[1] - lo[1])],
+    scale: W / (hi[0] - lo[0]),
+  };
+}
+
+// Points of the cloud: the area of a disc is proportional to the kernel weight. The common scale of the
+// areas follows n, otherwise a cloud of thousands paints the whole plane.
+function drawCloud(c, view, Z, w, rMax) {
+  c.save();
+  c.lineWidth = 1;
+  Z.forEach((z, i) => {
+    const [px, py] = view.toPx(z);
+    if (px < -10 || py < -10 || px > view.W + 10 || py > view.W + 10) return;
+    c.beginPath(); c.arc(px, py, rMax * Math.sqrt(w[i]), 0, 2 * Math.PI);
+    c.globalAlpha = 0.28; c.fillStyle = css("--text"); c.fill();
+    c.globalAlpha = 0.75; c.strokeStyle = css("--text-2"); c.stroke();
+  });
+  c.restore();
+}
+
+function strokeLine(c, view, a, coef, style) {
+  if (Math.hypot(...coef) < 1e-9) return;
+  const box = [view.lo[0], view.hi[0], view.lo[1], view.hi[1]];
+  const { xs, ys } = segmentInBox(a, coef, state.x, box, 0.5);
+  const pts = xs.map((X, k) => view.toPx([X, ys[k]]));
+  polyline(c, pts, css("--surface"), style.w + 3);
+  polyline(c, pts, css("--mark"), style.w, style.dash);
+}
+
+function drawCurves(model, cloud, grad) {
+  const { Z, t } = cloud;
+  cx.clearRect(0, 0, cc.width, cc.height);
+  const lo = Math.log10(SIGMA_LO), hi = Math.log10(SIGMA_HI);
+  const xs = Array.from({ length: CURVE_POINTS }, (_, k) => lo + ((hi - lo) * k) / (CURVE_POINTS - 1));
+  const rows = xs.map((l) => {
+    const w = limeWeights(Z, state.x, SCALE, 10 ** l), g = weightedLinearFit(Z, state.x, t, w);
+    return g ? { r2: g.r2, ang: Math.hypot(...grad) > 1e-9 ? angleDeg(g.coef, grad) : NaN } : { r2: NaN, ang: NaN };
+  });
+  const ticks = [Math.log10(0.1), Math.log10(0.3), 0, Math.log10(3)];
+  const xfmt = (l) => num(10 ** l);
+  const panels = [
+    { top: 26, h: 110, key: "r2", ylim: [0, 1], yticks: [0, 0.5, 1], title: "взвешенный R²", fmtY: (v) => toComma(v, 1) },
+    { top: 176, h: 110, key: "ang", ylim: [0, 90], yticks: [0, 30, 60, 90], title: "угол между w и ∇f, °", fmtY: (v) => String(v) },
+  ];
+  panels.forEach((p, k) => {
+    const f = frame(cc, [lo, hi], p.ylim, { margin: [44, p.top, 14, cc.height - p.top - p.h] });
+    axes(cx, f, { xticks: k ? ticks : [], yticks: p.yticks, xfmt, yfmt: p.fmtY, xlabel: k ? "σ" : "", ylabel: p.title });
+    const pts = xs.map((l, i) => [f.px(l), f.py(Math.min(p.ylim[1], rows[i][p.key]))]).filter((q) => Number.isFinite(q[1]));
+    polyline(cx, pts, css("--text"), 2);
+    // The current σ: an ink line through the plot.
+    const sx = f.px(Math.min(hi, Math.max(lo, Math.log10(sigmaNow()))));
+    polyline(cx, [[sx, f.mt], [sx, f.mt + f.H]], css("--mark"), 1.5, [4, 4]);
+  });
+}
+
+function draw() {
+  const name = $("model").value, model = getModel(name), f = model.f;
+  const n = nNow(), sigma = sigmaNow();
+  $("sv").textContent = num(sigma); $("nv").textContent = n;
+  const cloud = getCloud(name, n);
+  const w = limeWeights(cloud.Z, state.x, SCALE, sigma);
+  const fit = weightedLinearFit(cloud.Z, state.x, cloud.t, w);
+  const grad = gradientFd(f, state.x, model.h);
+  const fx = f(state.x), neff = nEff(w);
+  const rMax = DOT_R * Math.min(1, (200 / n) ** 0.35);
+
+  // Main plane: model regions, boundary, train (filled) and test (hollow) points, then the cloud and the line.
+  const v = dataView(cv, D);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(background(name, v, D, 96, "main"), 0, 0);
+  drawCloud(ctx, v, cloud.Z, w, rMax);
+  if (fit) strokeLine(ctx, v, fit.a, fit.coef, { w: 2.5, dash: [9, 6] });
+  probeMark(ctx, ...v.toPx(state.x));
+
+  // Zoom: the same picture in a window of half-width ZOOM_HALF around x.
+  const zw = zoomView();
+  zx.clearRect(0, 0, zv.width, zv.height);
+  zx.drawImage(background(name, zw, D, 64, "zoom|" + state.x.join(",")), 0, 0);
+  drawCloud(zx, zw, cloud.Z, w, rMax * 1.6);
+  strokeLine(zx, zw, fx, grad, { w: 2, dash: [2, 5] });
+  if (fit) strokeLine(zx, zw, fit.a, fit.coef, { w: 2.5, dash: [9, 6] });
+  probeMark(zx, ...zw.toPx(state.x));
+  zx.save(); zx.font = font(12); zx.textAlign = "left"; zx.textBaseline = "top";
+  const cap = `окно ±${toComma(ZOOM_HALF, null)} вокруг x`;
+  zx.globalAlpha = 0.85; zx.fillStyle = css("--surface"); zx.fillRect(4, 4, zx.measureText(cap).width + 8, 20);
+  zx.globalAlpha = 1; zx.fillStyle = css("--text"); mathText(zx, cap, 8, 8); zx.restore();
+
+  drawCurves(name, cloud, grad);
+
+  const gnorm = Math.hypot(...grad);
+  const row = (k, val) => `<span>${k}</span><span>${val}</span>`;
+  $("facts").innerHTML =
+    row("Объект", state.label) +
+    row("x₁; x₂", `${fmt(state.x[0])}; ${fmt(state.x[1])}`) +
+    row("f(x)", fmt(fx, 3)) +
+    row("a = g(x)", fit ? fmt(fit.a, 3) : "—") +
+    row("w₁; w₂", fit ? `${fmt(fit.coef[0])}; ${fmt(fit.coef[1])}` : "—") +
+    row("∇f₁; ∇f₂", `${fmt(grad[0])}; ${fmt(grad[1])}`) +
+    row("Угол w и ∇f", fit && gnorm > 1e-9 ? `${fmt(angleDeg(fit.coef, grad), 0)}°` : "—") +
+    row("‖w‖ / ‖∇f‖", fit && gnorm > 1e-9 ? fmt(Math.hypot(...fit.coef) / gnorm) : "—") +
+    row("n_eff из n", `${fmt(neff, 0)} из ${n}`) +
+    row("R² взвеш.", fit ? fmt(fit.r2, 3) : "—") +
+    row("Точность обуч. / тест", `${toComma(model.accTr, 2)} / ${toComma(model.accTe, 2)}`);
+  const paragraphs = (list) => list.map((t) => `<p class="note">${t}</p>`).join("");
+  $("about").innerHTML = paragraphs([
+    `Ядро exp(−d²/(2σ²)), d — расстояние между стандартизованными строками (каждый столбец делится на своё стандартное отклонение); ширина по умолчанию 0,75√p = ${fmt(SIGMA_DEFAULT)}. В статье LIME то же ядро записано exp(−d²/σ²), так что σ статьи = σ·√2 = ${fmt(sigma * Math.SQRT2)}`,
+    "Возмущения — вокруг x, а не вокруг среднего (в lime это sample_around_instance=True); подгонка — МНК без штрафа, а пакет lime по умолчанию берёт ridge с α = 1",
+    `f — ${model.kind}. ∇f — центральная разность с шагом h = ${toComma(model.h, null)}` +
+      (model.steps ? ": у леса и бустинга f кусочно-постоянна, это наклон в окне 2h, а не производная, и от h он зависит. " : ": у гладкой f это производная с точностью шага. ") +
+      "Градиент и w сравниваются в исходных единицах признаков",
+    ...(fit ? [] : ["Облако вырождено: взвешенных точек слишком мало для прямой, увеличь σ или n"]),
+  ]);
+  $("curveNote").innerHTML = paragraphs([
+    "Кривые — для того же облака (те же ε) при разной σ: меняется только вес. У гладкой f (нейронная сеть) R² растёт при сужении ядра, а угол к градиенту падает потому, что f в малой окрестности почти линейна, а не потому, что точек стало больше",
+    "n_eff при сужении только падает, и w считается по немногим точкам и шумит (нажми \"пересэмплировать\"). У леса и бустинга f кусочно-постоянна, и кривые устроены иначе",
+    "В обоих случаях σ не выбирают по верности: R² говорит, насколько прямая подходит к f в окрестности, но не какая окрестность нужна. Что значит \"рядом\" — решение того, кто объясняет, а не число на графике",
+  ]);
+}
+
+function pick(e) {
+  const [px, py] = canvasXY(cv, e), v = dataView(cv, D);
+  let best = -1, bd = PICK_PX;
+  ALL.forEach((p, i) => { const [qx, qy] = v.toPx(p); const dd = Math.hypot(qx - px, qy - py); if (dd < bd) { bd = dd; best = i; } });
+  if (best >= 0) {
+    const train = best < D.Xtr.length;
+    state.x = ALL[best].slice();
+    state.label = train ? `обуч. №${best + 1}` : `тест №${best - D.Xtr.length + 1}`;
+  } else {
+    state.x = v.toX(px, py).map((a) => +a.toFixed(3));
+    state.label = "точка вне выборки";
+  }
+  draw();
+}
+const ALL = [...D.Xtr, ...D.Xte];
+cv.addEventListener("pointerdown", pick);
+
+(() => {
+  $("sigma").min = Math.log10(SIGMA_LO); $("sigma").max = Math.log10(SIGMA_HI); $("sigma").value = Math.log10(SIGMA_DEFAULT);
+  $("nn").max = N_LEVELS.length - 1; $("nn").value = N_LEVELS.indexOf(N_DEFAULT);
+  const d = defaultObject(getModel("forest").f);
+  state.x = d.x; state.label = d.label;
+})();
+$("model").addEventListener("input", draw);
+$("sigma").addEventListener("input", draw);
+$("nn").addEventListener("input", draw);
+$("resample").addEventListener("click", () => { state.seed++; draw(); });
+$("defw").addEventListener("click", () => { $("sigma").value = Math.log10(SIGMA_DEFAULT); draw(); });
+onTheme(() => { bgCache.clear(); draw(); });
+draw();
+</script>
+</body>
+</html>

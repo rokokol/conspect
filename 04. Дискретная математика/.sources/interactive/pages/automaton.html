@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница автомата и теоремы Мура</title>
+<style>
+/*COMMON_CSS*/
+svg.graph { width: 100%; max-width: 560px; height: auto; display: block; margin: 0 auto; }
+svg.graph .vtx { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+svg.graph .vlab { fill: var(--text); font: 500 15px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; }
+svg.graph .arc { fill: none; stroke: var(--text-2); stroke-width: 1.6; }
+svg.graph .arc.run { stroke: var(--accent); stroke-width: 3.2; }
+svg.graph .alab { fill: var(--text); font: 500 12px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--surface); stroke-width: 5px; }
+svg.graph marker path { fill: var(--text-2); }
+svg.graph marker.run path { fill: var(--accent); }
+.keyline { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--text-2); vertical-align: middle; margin-right: 6px; }
+.keyline.run { border-color: var(--accent); border-top-width: 4px; }
+table.trans select { width: auto; min-width: 3.4em; padding: 2px; }
+table.trans td, table.trans th { text-align: center; }
+tr.later td { color: var(--text-2); }
+.cls { white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница автомата и теоремы Мура</h1>
+  <p class="lead">Автомат без начального состояния: таблица переходов задаёт следующее состояние и выход для каждой пары (состояние, входной символ). Можно прогнать слово из любого состояния, а ниже следить, как классы R<sub>m</sub> неотличимых состояний дробятся по шагам, пока не остановятся, и как длина кратчайшего эксперимента укладывается в r − 1</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Автомат</h2>
+        <label>Число состояний r
+          <select id="n"><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
+        </label>
+        <label>Готовый автомат
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="note">три состояния из конспекта</option>
+            <option value="chain">цепочка из пяти состояний: эксперимент длины 4</option>
+            <option value="same">есть неотличимые состояния</option>
+          </select>
+        </label>
+      </div>
+      <div class="sec">
+        <h2>Прогон слова</h2>
+        <label>Входное слово из 0 и 1
+          <input id="word" type="text" spellcheck="false" autocomplete="off" value="0110">
+        </label>
+        <p id="werr" class="err" role="status"></p>
+        <label>Начальное состояние
+          <select id="start"></select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Таблица переходов</h2>
+        <div id="table"></div>
+        <p class="note">В ячейке: следующее состояние G и выходной символ F для входа 0 или 1. Выбор в ячейке меняет автомат</p>
+      </section>
+      <section>
+        <h2>Диаграмма Мура</h2>
+        <svg id="graph" class="graph" viewBox="0 -30 480 400" role="img" aria-label="Диаграмма автомата"></svg>
+        <div class="legend">
+          <span><span class="keyline"></span>переход, подпись вход (выход)</span>
+          <span><span class="keyline run"></span>переходы прогона слова</span>
+        </div>
+      </section>
+      <section>
+        <h2>Прогон слова</h2>
+        <div id="run"></div>
+      </section>
+      <section>
+        <h2>Классы R<sub>m</sub> по шагам</h2>
+        <div class="ctl">
+          <button id="prev" aria-label="Шаг назад">←</button>
+          <input id="step" type="range" min="0" max="1" value="0" aria-label="Длина эксперимента m">
+          <button id="next" aria-label="Шаг вперёд">→</button>
+        </div>
+        <div id="moore"></div>
+      </section>
+      <section>
+        <h2>Кратчайшие отличающие эксперименты</h2>
+        <div id="pairs"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+const NOTE = { next: [[1, 0], [1, 0], [1, 2]], out: [[0, 0], [1, 0], [0, 1]] };
+// The chain of the note's footnote, with two input symbols that act alike: states 1 and 2 differ only on a word of length 4.
+const CHAIN = { next: [[1, 1], [2, 2], [3, 3], [4, 4], [4, 4]], out: [[0, 0], [0, 0], [0, 0], [0, 0], [1, 1]] };
+let aut = { next: NOTE.next.map((r) => [...r]), out: NOTE.out.map((r) => [...r]) };
+
+const A = () => aut.out[0].length;
+const st = (q) => String(q + 1);
+const wordText = (w) => w.join("") || "пустое слово";
+
+function loadPreset(name) {
+  if (name === "note") aut = { next: NOTE.next.map((r) => [...r]), out: NOTE.out.map((r) => [...r]) };
+  else if (name === "chain") aut = { next: CHAIN.next.map((r) => [...r]), out: CHAIN.out.map((r) => [...r]) };
+  else aut = { next: [[1, 0], [0, 1], [0, 2]], out: [[0, 1], [1, 0], [1, 0]] };   // states 2 and 3 give equal outputs and move into the same class
+}
+
+// A new state count keeps the rows that remain; a new row loops to its own state with output 0.
+function resize(r) {
+  while (aut.next.length < r) { aut.next.push(Array.from({ length: A() }, () => aut.next.length)); aut.out.push(Array.from({ length: A() }, () => 0)); }
+  aut.next.length = r; aut.out.length = r;
+  aut.next = aut.next.map((row, q) => row.map((t) => (t < r ? t : q)));
+}
+
+function layout(r) {
+  return Array.from({ length: r }, (_, k) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * k) / r;
+    return [240 + (r === 1 ? 0 : 130 * Math.cos(a)), 180 + (r === 1 ? 0 : 120 * Math.sin(a))];
+  });
+}
+
+function arcPath(from, to, pos) {
+  const [x1, y1] = pos[from], [x2, y2] = pos[to], R = 21;
+  if (from === to) {
+    let dx = x1 - 240, dy = y1 - 180;
+    const len = Math.hypot(dx, dy) || 1;
+    dx = dx / len; dy = dy / len;
+    const nx = -dy, ny = dx;
+    const sx = x1 + dx * R + nx * 9, sy = y1 + dy * R + ny * 9, ex = x1 + dx * R - nx * 9, ey = y1 + dy * R - ny * 9;
+    return { d: `M ${sx} ${sy} C ${sx + dx * 40 + nx * 18} ${sy + dy * 40 + ny * 18}, ${ex + dx * 40 - nx * 18} ${ey + dy * 40 - ny * 18}, ${ex} ${ey}`, lx: x1 + dx * (R + 38), ly: y1 + dy * (R + 38) };
+  }
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+  const sx = x1 + ux * R, sy = y1 + uy * R, ex = x2 - ux * (R + 4), ey = y2 - uy * (R + 4);
+  const bend = 24, cx = (x1 + x2) / 2 - uy * bend, cy = (y1 + y2) / 2 + ux * bend;
+  // The label sits beside the middle of its own arc, on the side the arc bends to, so the labels of two opposite arcs are on opposite sides.
+  return { d: `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`, lx: (sx + 2 * cx + ex) / 4 - uy * 15, ly: (sy + 2 * cy + ey) / 4 + ux * 15 };
+}
+
+function renderGraph(runPairs) {
+  const r = aut.next.length, pos = layout(r);
+  const groups = new Map();
+  aut.next.forEach((row, q) => row.forEach((t, a) => {
+    const key = `${q}>${t}`;
+    if (!groups.has(key)) groups.set(key, { from: q, to: t, labels: [] });
+    groups.get(key).labels.push(`${a}(${aut.out[q][a]})`);
+  }));
+  const marker = (id, cls) => `<marker id="${id}" class="${cls}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"></path></marker>`;
+  let s = `<defs>${marker("ah", "")}${marker("ahr", "run")}</defs>`;
+  const live = [...groups.values()].map((g) => ({ ...g, run: runPairs.has(`${g.from}>${g.to}`) })).sort((p, q) => p.run - q.run);
+  for (const g of live) {
+    const p = arcPath(g.from, g.to, pos);
+    s += `<path class="arc${g.run ? " run" : ""}" d="${p.d}" marker-end="url(#${g.run ? "ahr" : "ah"})"></path><text class="alab" x="${p.lx}" y="${p.ly}">${g.labels.join(" ")}</text>`;
+  }
+  pos.forEach(([x, y], q) => { s += `<circle class="vtx" cx="${x}" cy="${y}" r="21"></circle><text class="vlab" x="${x}" y="${y}">${st(q)}</text>`; });
+  $("graph").innerHTML = s;
+  // Fit the frame to what is drawn: the vertices, the loops and labels outside them.
+  const pad = 70;
+  const xs = pos.map((p) => p[0]), ys = pos.map((p) => p[1]);
+  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  $("graph").setAttribute("viewBox", `${x0} ${y0} ${x1 - x0} ${y1 - y0}`);
+}
+
+function renderTable() {
+  const r = aut.next.length;
+  const opts = (n, cur) => Array.from({ length: n }, (_, v) => `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`).join("");
+  const stOpts = (cur) => Array.from({ length: r }, (_, v) => `<option value="${v}"${v === cur ? " selected" : ""}>${v + 1}</option>`).join("");
+  const head = Array.from({ length: A() }, (_, a) => `<th>вход ${a}: G, F</th>`).join("");
+  const rows = aut.next.map((row, q) => `<tr><td>${q + 1}</td>${row.map((t, a) => `<td><select id="nx-${q}-${a}" aria-label="Следующее состояние из ${q + 1} по входу ${a}">${stOpts(t)}</select> <select id="ou-${q}-${a}" aria-label="Выход из ${q + 1} по входу ${a}">${opts(2, aut.out[q][a])}</select></td>`).join("")}</tr>`).join("");
+  $("table").innerHTML = `<table class="compact trans"><tr><th>Состояние q</th>${head}</tr>${rows}</table>`;
+  aut.next.forEach((row, q) => row.forEach((_, a) => {
+    $(`nx-${q}-${a}`).addEventListener("input", () => { aut.next[q][a] = +$(`nx-${q}-${a}`).value; render(); });
+    $(`ou-${q}-${a}`).addEventListener("input", () => { aut.out[q][a] = +$(`ou-${q}-${a}`).value; render(); });
+  }));
+}
+
+function readWord() {
+  const text = $("word").value.trim();
+  if (!/^[01]*$/.test(text)) { $("werr").textContent = "в слове только символы 0 и 1"; return null; }
+  $("werr").textContent = "";
+  return [...text].map(Number);
+}
+
+function renderRun() {
+  const w = readWord();
+  const runPairs = new Set();
+  if (w) {
+    const q = +$("start").value;
+    const res = runAutomaton(aut, q, w);
+    const rows = w.map((a, t) => `<tr><td>${t + 1}</td><td>${a}</td><td>${st(res.states[t])}</td><td>${res.outputs[t]}</td><td>${st(res.states[t + 1])}</td></tr>`).join("");
+    w.forEach((_, t) => runPairs.add(`${res.states[t]}>${res.states[t + 1]}`));
+    $("run").innerHTML = `<div class="formula">F(${esc(wordText(w))}, ${st(q)}) = <b>${res.outputs.join("") || "пустое слово"}</b>, автомат остановился в состоянии ${st(res.states[res.states.length - 1])}</div>
+      ${w.length ? `<table class="compact"><tr><th>Такт</th><th>Вход</th><th>Состояние до</th><th>Выход</th><th>Состояние после</th></tr>${rows}</table>` : ""}`;
+  } else {
+    $("run").innerHTML = "";
+  }
+  return runPairs;
+}
+
+const classText = (classes) => classes.map((c) => `<span class="cls">{${c.map(st).join(",")}}</span>`).join(" ");
+
+function renderMoore() {
+  const r = aut.next.length, steps = mooreSteps(aut), last = steps.length - 1;
+  $("step").max = last;
+  const k = Math.min(+$("step").value, last);
+  $("step").value = k;
+  $("prev").disabled = k === 0; $("next").disabled = k === last;
+  const rows = steps.map((s, m) => {
+    let split = "";
+    if (m > 0) {
+      const prev = steps[m - 1], items = [];
+      for (let a = 0; a < r; a++) for (let b = a + 1; b < r; b++) {
+        if (prev.cls[a] === prev.cls[b] && s.cls[a] !== s.cls[b]) items.push([a, b]);
+      }
+      split = items.length
+        ? items.slice(0, 3).map(([a, b]) => { const w = distinguish(aut, a, b); const o = (q) => runAutomaton(aut, q, w).outputs.join(""); return `${st(a)} и ${st(b)}: слово ${w.join("")} даёт ${o(a)} и ${o(b)}`; }).join("; ") + (items.length > 3 ? "; …" : "")
+        : "";
+    } else split = "все состояния вместе: слово нулевой длины ничего не отличает";
+    return `<tr class="${m === k ? "sel" : m > k ? "later" : ""}"><td>${m}</td><td>${classText(s.classes)}</td><td>${s.classes.length}</td><td class="why">${esc(split)}</td></tr>`;
+  }).join("");
+  const counts = steps.slice(0, k + 1).map((s) => s.classes.length);
+  const done = k === last;
+  const indist = steps[last].classes.some((c) => c.length > 1);
+  $("moore").innerHTML = `<table class="compact"><tr><th>m</th><th>Классы R<sub>m</sub></th><th>s(m)</th><th>Что отличилось на этом шаге</th></tr>${rows}</table>
+    <div class="formula">Шаг m = ${k}: классов s(${k}) = ${counts[k]} из ${r} состояний, ${classText(steps[k].classes)}<br>Числа классов по шагам: ${counts.map((c, m) => `s(${m}) = ${c}`).join(" < ")}${done ? ` ≤ r = ${r}` : " …"}${done ? `<br>Дробление остановилось на m = ${last}: ${indist ? "в остановившемся разбиении есть класс из нескольких состояний, они неотличимы никаким экспериментом" : "все состояния попарно отличимы"}; кратчайший эксперимент не длиннее ${Math.max(last, 0)} ≤ r − 1 = ${r - 1}` : ""}</div>
+    <p class="note">R<sub>m</sub>: состояния вместе, если слова длины m их не отличают. R<sub>m+1</sub> оставляет вместе состояния с равными выходами на каждом входе и переходами в один класс R<sub>m</sub></p>`;
+}
+
+function renderPairs() {
+  const r = aut.next.length, rows = [];
+  for (let a = 0; a < r; a++) for (let b = a + 1; b < r; b++) {
+    const w = distinguish(aut, a, b);
+    if (w) {
+      const o = (q) => runAutomaton(aut, q, w).outputs.join("");
+      rows.push(`<tr><td>${st(a)} и ${st(b)}</td><td>${w.join("")}</td><td>${w.length}</td><td>${o(a)} и ${o(b)}</td></tr>`);
+    } else rows.push(`<tr><td>${st(a)} и ${st(b)}</td><td colspan="3">неотличимы</td></tr>`);
+  }
+  $("pairs").innerHTML = `<table class="compact"><tr><th>Пара</th><th>Эксперимент</th><th>Длина</th><th>Выходы</th></tr>${rows.join("")}</table>`;
+}
+
+function render() {
+  const r = aut.next.length;
+  $("n").value = r;
+  const keep = Math.min(+$("start").value || 0, r - 1);
+  $("start").innerHTML = Array.from({ length: r }, (_, q) => `<option value="${q}"${q === keep ? " selected" : ""}>${q + 1}</option>`).join("");
+  renderTable();
+  const runPairs = renderRun();
+  renderGraph(runPairs);
+  renderMoore(); renderPairs();
+}
+
+$("n").addEventListener("input", () => { resize(+$("n").value); $("step").value = 0; render(); });
+$("preset").addEventListener("input", () => {
+  if (!$("preset").value) return;
+  loadPreset($("preset").value); $("preset").value = ""; $("step").value = 0; render();
+});
+function renderGraphAndRun() { renderGraph(renderRun()); }
+$("word").addEventListener("input", renderGraphAndRun);
+$("start").addEventListener("input", renderGraphAndRun);
+$("step").addEventListener("input", renderMoore);
+$("prev").addEventListener("click", () => { $("step").value = +$("step").value - 1; renderMoore(); });
+$("next").addEventListener("click", () => { $("step").value = +$("step").value + 1; renderMoore(); });
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница регуляризации</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница регуляризации</h1>
+  <p class="lead">Полиномиальная регрессия на 40 точках: залитые — обучение, полые — тест. Внизу веса модели на стандартизованных признаках x, x², …; LASSO зануляет их по одному, Ridge только сжимает</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="fit" width="640" height="400" aria-label="Подогнанная кривая"></canvas>
+      <canvas id="bars" width="640" height="220" aria-label="Веса модели"></canvas>
+      <canvas id="geo" class="square" width="640" height="640" aria-label="Геометрия регуляризации в двух весах"></canvas>
+    </div>
+    <div class="panel">
+      <label>Метод
+        <select id="pen">
+          <option value="ols">Без регуляризации (МНК)</option>
+          <option value="ridge" selected>Ridge, L2</option>
+          <option value="lasso">LASSO, L1</option>
+        </select>
+      </label>
+      <label>Степень полинома: <b id="dv"></b>
+        <input id="deg" type="range" min="1" max="15" value="12">
+      </label>
+      <label>Сила регуляризации α = <b id="av"></b>
+        <input id="la" type="range" min="-6" max="2" step="0.1" value="-2">
+      </label>
+      <div class="score" id="score"></div>
+      <label>λ для картинки с двумя весами: <b id="gv"></b>
+        <input id="glam" type="range" min="0" max="6" step="0.05" value="1">
+      </label>
+      <p class="note">Нижняя картинка — та же задача в двух весах: эллипсы — линии уровня потерь вокруг решения МНК (крестик), круг (Ridge) или ромб (LASSO) — область ‖w‖ ≤ r, на которую регуляризация загоняет решение. Оптимум — точка касания эллипса и области; пунктир — её путь при росте λ. У ромба касание часто приходится на вершину, где один вес ровно 0</p>
+      <div class="legend"><span><i style="background:var(--model)"></i>модель</span><span><i style="background:var(--train)"></i>train</span><span><i style="background:var(--test)"></i>test</span><span><i style="background:var(--text-2)"></i>истинная sin 2πx</span></div>
+      <p class="note">Ridge минимизирует ‖y − Xw‖² + α‖w‖₂², LASSO — ‖y − Xw‖² / 2n + α‖w‖₁, как в sklearn; свободный член не штрафуется. Поэтому одинаковое α у них значит разное</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const d = DATA.reg1d;
+const Xtr = d.Xtr, ytr = d.ytr, Xte = d.Xte, yte = d.yte;
+// LASSO from its exact path, computed once per degree: coordinate descent
+// needs seconds to converge at small alpha on correlated powers of x.
+const PATHS = {};
+const lassoModel = (deg, alpha) => lassoAt(PATHS[deg] ||= lassoPath(Xtr, ytr, { degree: deg }), alpha);
+
+function mse(m, X, y) {
+  return X.reduce((s, x, i) => s + (linearPredict(m, x) - y[i]) ** 2, 0) / X.length;
+}
+
+function draw() {
+  const pen = $("pen").value, deg = +$("deg").value, la = +$("la").value;
+  const alpha = 10 ** la;
+  $("dv").textContent = deg;
+  $("av").textContent = pen === "ols" ? "—" : alpha < 0.01 ? formatNumber(alpha, 2) : toComma(alpha, 3);
+  $("la").disabled = pen === "ols";
+  const m = pen === "lasso" ? lassoModel(deg, alpha) : fitLinear(Xtr, ytr, { degree: deg, penalty: pen, alpha });
+
+  const cv = $("fit"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.02, 1.02], [-2, 2]);
+  axes(ctx, f, { xticks: [0, 0.5, 1], yticks: [-2, -1, 0, 1, 2], fmt: (t) => toComma(t, null), xlabel: "x", ylabel: "y" });
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  const xs = Array.from({ length: 300 }, (_, i) => -0.02 + (1.04 * i) / 299);
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(Math.sin(2 * Math.PI * x))]), css("--text-2"), 1.5, [5, 4]);
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(linearPredict(m, [x]))]), css("--model"), 2.5);
+  Xtr.forEach((x, i) => dot(ctx, f.px(x[0]), f.py(ytr[i]), css("--train")));
+  Xte.forEach((x, i) => dot(ctx, f.px(x[0]), f.py(yte[i]), css("--test"), { hollow: true }));
+  ctx.restore();
+
+  const bv = $("bars"), bx = bv.getContext("2d");
+  bx.clearRect(0, 0, bv.width, bv.height);
+  const wmax = Math.max(1, ...m.w.map(Math.abs));
+  const g = frame(bv, [0, m.w.length], [-wmax, wmax], { margin: [52, 10, 12, 26] });
+  axes(bx, g, { yticks: [-wmax, 0, wmax], fmt: num });
+  const bw = (g.W / m.w.length) * 0.7;
+  m.w.forEach((w, j) => {
+    const x = g.px(j + 0.5) - bw / 2;
+    bx.fillStyle = w === 0 ? css("--line") : css("--c0");
+    const y0 = g.py(0), y1 = g.py(w);
+    bx.fillRect(x, Math.min(y0, y1), bw, Math.max(Math.abs(y1 - y0), w === 0 ? 2 : 1));
+    bx.fillStyle = css("--text-2"); bx.font = font(11); bx.textAlign = "center"; bx.textBaseline = "top";
+    mathText(bx, power(j + 1), g.px(j + 0.5), g.mt + g.H + 6);
+  });
+
+  const zeros = m.w.filter((w) => w === 0).length;
+  $("score").innerHTML =
+    `<span>MSE на обучении</span><span>${toComma(mse(m, Xtr, ytr), 3)}</span>` +
+    `<span>MSE на тесте</span><span>${toComma(mse(m, Xte, yte), 3)}</span>` +
+    `<span>Нулевых весов</span><span>${zeros} из ${m.w.length}</span>` +
+    `<span>Норма весов ‖w‖₂</span><span>${num(Math.hypot(...m.w))}</span>`;
+}
+
+// Two-weight picture: loss (w - c)^T A (w - c) with correlated features.
+const GA = [[2, 0.9], [0.9, 1]], GC = [1.5, 1.2];
+const gloss = (w) => {
+  const d0 = w[0] - GC[0], d1 = w[1] - GC[1];
+  return GA[0][0] * d0 * d0 + 2 * GA[0][1] * d0 * d1 + GA[1][1] * d1 * d1;
+};
+
+function ellipse(level) {
+  // Points w with gloss(w) = level: w = c + sqrt(level) * A^(-1/2) u, |u| = 1.
+  const a = GA[0][0], b = GA[0][1], d = GA[1][1];
+  const tr = a + d, det = a * d - b * b, disc = Math.sqrt(tr * tr / 4 - det);
+  const l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+  const v1 = Math.abs(b) > 1e-12 ? [l1 - d, b] : [1, 0];
+  const n1 = Math.hypot(...v1), e1 = [v1[0] / n1, v1[1] / n1], e2 = [-e1[1], e1[0]];
+  return Array.from({ length: 121 }, (_, k) => {
+    const t = (2 * Math.PI * k) / 120, s = Math.sqrt(level);
+    const u1 = (s * Math.cos(t)) / Math.sqrt(l1), u2 = (s * Math.sin(t)) / Math.sqrt(l2);
+    return [GC[0] + u1 * e1[0] + u2 * e2[0], GC[1] + u1 * e1[1] + u2 * e2[1]];
+  });
+}
+
+function drawGeometry() {
+  const pen = $("pen").value, lam = +$("glam").value;
+  $("gv").textContent = pen === "ols" ? "—" : toComma(lam, 2);
+  $("glam").disabled = pen === "ols";
+  const kind = pen === "lasso" ? "l1" : "l2";
+  const cv = $("geo"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.6, 2.2], [-0.6, 2.2], { margin: [40, 28, 14, 42], equal: true });
+  axes(ctx, f, { xticks: [0, 1, 2], yticks: [0, 1, 2], xlabel: "w₁", ylabel: "w₂" });
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  polyline(ctx, [[f.px(f.x0), f.py(0)], [f.px(f.x1), f.py(0)]], css("--text-2"), 1);
+  polyline(ctx, [[f.px(0), f.py(f.y0)], [f.px(0), f.py(f.y1)]], css("--text-2"), 1);
+  const w = pen === "ols" ? GC : penalized2d(GA, GC, lam, kind);
+  const touch = gloss(w);
+  for (const lv of [0.05, 0.2, 0.5, 1, 2, 3.5]) polyline(ctx, ellipse(lv).map(([x, y]) => [f.px(x), f.py(y)]), css("--line"), 1);
+  if (pen !== "ols") {
+    const path = Array.from({ length: 121 }, (_, k) => penalized2d(GA, GC, (6 * k) / 120 + 1e-9, kind));
+    polyline(ctx, [GC, ...path].map(([x, y]) => [f.px(x), f.py(y)]), css("--text-2"), 1.5, [4, 4]);
+    polyline(ctx, ellipse(touch).map(([x, y]) => [f.px(x), f.py(y)]), css("--c1m"), 2);
+    const r = kind === "l2" ? Math.hypot(...w) : Math.abs(w[0]) + Math.abs(w[1]);
+    const ball = kind === "l2"
+      ? Array.from({ length: 121 }, (_, k) => [r * Math.cos((2 * Math.PI * k) / 120), r * Math.sin((2 * Math.PI * k) / 120)])
+      : [[r, 0], [0, r], [-r, 0], [0, -r], [r, 0]];
+    ctx.fillStyle = css("--c0"); ctx.globalAlpha = 0.18;
+    ctx.beginPath(); ball.forEach(([x, y], k) => (k ? ctx.lineTo(f.px(x), f.py(y)) : ctx.moveTo(f.px(x), f.py(y)))); ctx.fill();
+    ctx.globalAlpha = 1;
+    polyline(ctx, ball.map(([x, y]) => [f.px(x), f.py(y)]), css("--c0"), 2);
+  }
+  const [cx, cy] = [f.px(GC[0]), f.py(GC[1])];
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx - 6, cy - 6); ctx.lineTo(cx + 6, cy + 6); ctx.moveTo(cx + 6, cy - 6); ctx.lineTo(cx - 6, cy + 6); ctx.stroke();
+  dot(ctx, f.px(w[0]), f.py(w[1]), css("--c1m"), { r: 6 });
+  ctx.restore();
+  ctx.fillStyle = css("--text"); ctx.font = font(13); ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText(`w = (${toComma(w[0], 2)}, ${toComma(w[1], 2)})`, f.ml + 8, f.mt + 22);
+}
+
+["pen", "deg", "la"].forEach((id) => $(id).addEventListener("input", () => { draw(); drawGeometry(); }));
+$("glam").addEventListener("input", drawGeometry);
+onTheme(drawGeometry);
+drawGeometry();
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

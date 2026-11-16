@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница случайного леса</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница случайного леса</h1>
+  <p class="lead">Случайный лес — бэггинг деревьев плюс случайное подмножество признаков в каждой вершине (max_features). Фон — доля деревьев за класс, линия — граница, залитые точки — обучение, полые — тест</p>
+  <p class="lead">Внизу ошибка по мере роста числа деревьев: на обучении, OOB (каждый объект оценивают только деревья, которые его не видели) и на тесте. В данных два признака, поэтому max_features = 2 — это обычный бэггинг, а 1 — один случайный признак на вершину</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" class="square" width="640" height="640" aria-label="Зоны случайного леса"></canvas>
+      <canvas id="err" width="640" height="340" aria-label="Ошибка от числа деревьев"></canvas>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="moons">Две луны</option>
+          <option value="circles">Кольца</option>
+          <option value="xor">XOR</option>
+          <option value="linear">Почти линейно разделимые</option>
+        </select>
+      </label>
+      <label>Число деревьев N = <b id="nv"></b>
+        <input id="n" type="range" min="1" max="100" value="30">
+      </label>
+      <label>max_features
+        <select id="mf"><option value="1">1 (случайный признак)</option><option value="2">2 (все, это бэггинг)</option></select>
+      </label>
+      <label>Глубина: <b id="dv"></b>
+        <input id="depth" type="range" min="1" max="12" value="12">
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <button id="reseed">Другой лес</button>
+      <div id="tbl"></div>
+      <button id="rho">Оценить ρ деревьев (только две луны)</button>
+      <div id="rhoTbl"></div>
+      <p class="note">Ошибка OOB считается по объектам, у которых есть хотя бы одно дерево без них: при N = 1 таких 37 %, при N ≥ 30 почти все. Число деревьев выбирают по плато OOB или валидации, а не по тесту</p>
+      <p class="note">Кнопка ρ обучает по 10 лесов из 25 деревьев на свежих выборках двух лун (новый шум) при обоих значениях max_features и оценивает по 49 точкам σ² (дисперсию одного дерева) и ρ (корреляцию двух деревьев) в формуле ρσ² + (1 − ρ)σ²/N. Это замер на одной задаче, у других данных ρ другой</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+const NMAX = 100, GRID = [1, 2, 3, 5, 8, 12, 17, 25, 35, 50, 70, 100];
+let seed = 1;
+const cache = new Map();
+
+const depthOf = () => (+$("depth").value >= 12 ? Infinity : +$("depth").value);
+
+function forest() {
+  const key = [$("ds").value, $("mf").value, depthOf(), seed].join();
+  if (!cache.has(key)) {
+    const d = DATA[$("ds").value];
+    cache.set(key, { d, f: fitForest(d.Xtr, d.ytr, { nTrees: NMAX, maxFeatures: +$("mf").value, maxDepth: depthOf(), seed: 100 + seed }) });
+  }
+  return cache.get(key);
+}
+
+const predict = (f, n) => (x) => { const q = forestProba(f, x, n); return q[1] > q[0] ? 1 : 0; };
+const errOf = (f, n, X, y) => 1 - accuracy(X.map(predict(f, n)), y);
+function oobOf(f, n) {
+  let wrong = 0, got = 0;
+  f.X.forEach((x, i) => { const q = oobProba(f, i, n); if (q) { got++; if ((q[1] > q[0] ? 1 : 0) !== f.y[i]) wrong++; } });
+  return { err: got ? wrong / got : NaN, covered: got / f.X.length };
+}
+
+function drawErr(S, N) {
+  const c = $("err"), cx = c.getContext("2d");
+  cx.clearRect(0, 0, c.width, c.height);
+  const rows = GRID.map((n) => ({ n, train: errOf(S.f, n, S.d.Xtr, S.d.ytr), test: errOf(S.f, n, S.d.Xte, S.d.yte), oob: oobOf(S.f, n).err }));
+  const top = Math.max(0.1, ...rows.flatMap((r) => [r.train, r.test, r.oob].filter((v) => v === v))) * 1.1;
+  const f = frame(c, [1, NMAX], [0, top], { margin: [52, 28, 136, 42] });
+  axes(cx, f, { xticks: [1, 25, 50, 75, 100], yticks: [0, top / 2, top], yfmt: (t) => num(t, 2), xlabel: "число деревьев n", ylabel: "доля ошибок" });
+  // Errors are not classes, so they stay neutral: told apart by dash and label.
+  const look = { train: { col: "--text-2", w: 2, dash: [2, 3] }, oob: { col: "--text", w: 2, dash: [9, 4] }, test: { col: "--text", w: 3, dash: [] } };
+  const items = [];
+  for (const [k, text] of [["train", "обучение"], ["oob", "OOB"], ["test", "тест"]]) {
+    const pts = rows.filter((r) => r[k] === r[k]).map((r) => [f.px(r.n), f.py(r[k])]);
+    polyline(cx, pts, css(look[k].col), look[k].w, look[k].dash);
+    items.push({ text, y: pts[pts.length - 1][1], look: look[k] });
+  }
+  endLabels(cx, f, items);
+  cx.strokeStyle = css("--mark"); cx.lineWidth = 1.5; cx.setLineDash([4, 4]);
+  cx.beginPath(); cx.moveTo(f.px(N), f.mt); cx.lineTo(f.px(N), f.mt + f.H); cx.stroke(); cx.setLineDash([]);
+}
+
+function draw() {
+  const S = forest(), N = +$("n").value;
+  $("nv").textContent = N; $("dv").textContent = depthOf() === Infinity ? "без ограничения" : $("depth").value;
+  const v = dataView(cv, S.d);
+  drawClassifier(ctx, v, S.d, (x) => forestProba(S.f, x, N), [0, 1], { showTest: $("showTest").checked, N: 70 });
+  drawErr(S, N);
+  const oob = oobOf(S.f, N);
+  const row = (a, b) => `<tr><td>${a}</td><td>${b}</td></tr>`;
+  $("tbl").innerHTML = `<table><tr><th></th><th>ошибка</th></tr>` +
+    row("обучение", num(errOf(S.f, N, S.d.Xtr, S.d.ytr), 3)) +
+    row(`OOB (оценка у ${Math.round(100 * oob.covered)} % объектов)`, num(oob.err, 3)) +
+    row("тест", num(errOf(S.f, N, S.d.Xte, S.d.yte), 3)) + `</table>`;
+}
+
+// σ² and ρ of one tree's class-1 share over fresh training sets of the same moons.
+function estimateRho() {
+  const gx = Array.from({ length: 7 }, (_, i) => -1 + (3 * i) / 6), gy = Array.from({ length: 7 }, (_, i) => -0.8 + (2 * i) / 6);
+  const pts = gx.flatMap((a) => gy.map((b) => [a, b]));
+  const rows = [];
+  for (const mf of [1, 2]) {
+    const Ps = pts.map(() => []);
+    for (let s = 0; s < 10; s++) {
+      const data = makeMoons(210, 0.3, 700 + s);
+      const f = fitForest(data.X, data.y, { nTrees: 25, maxFeatures: mf, maxDepth: depthOf(), seed: 300 + s });
+      pts.forEach((p, q) => Ps[q].push(f.trees.map((t) => treeProba(t, p)[1])));
+    }
+    const st = ensembleStats(Ps);
+    rows.push({ mf, ...st });
+  }
+  $("rhoTbl").innerHTML = `<table class="compact"><tr><th>mf</th><th>σ²</th><th>ρ</th><th>ρσ²</th><th>D₂₅</th></tr>` +
+    rows.map((r) => `<tr><td>${r.mf}</td><td>${num(r.sigma2, 2)}</td><td>${num(r.rho, 2)}</td><td>${num(r.rho * r.sigma2, 2)}</td><td>${num(r.varMean[24], 2)}</td></tr>`).join("") +
+    `</table><p class="note">mf — max_features; D₂₅ — дисперсия среднего 25 деревьев</p>`;
+}
+
+$("ds").addEventListener("input", () => { $("rho").disabled = $("ds").value !== "moons"; $("rhoTbl").innerHTML = ""; draw(); });
+["n", "mf", "depth", "showTest"].forEach((id) => $(id).addEventListener("input", draw));
+$("reseed").addEventListener("click", () => { seed++; draw(); });
+$("rho").addEventListener("click", () => { $("rhoTbl").innerHTML = `<p class="note">считаю…</p>`; setTimeout(estimateRho, 30); });
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

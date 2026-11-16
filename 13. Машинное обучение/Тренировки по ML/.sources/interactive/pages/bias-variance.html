@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница смещения и разброса</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+.swatch-fill { display: inline-block; width: 14px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 5px; opacity: 0.45; }
+.legend i.dash { background: none; border-top: 2px dashed var(--text-2); height: 0; }
+.legend i.dot { height: 9px; width: 9px; border-radius: 50%; }
+.legend i.ring { height: 9px; width: 9px; border-radius: 50%; background: none; border: 2px solid var(--mark); }
+.score span:nth-child(even) { white-space: nowrap; }
+.plots > .note { margin: 2px 0 0; }
+button { justify-self: start; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница смещения и разброса</h1>
+  <p class="lead">Многочлен степени d по методу наименьших квадратов, обученный на свежей выборке из n точек зашумлённого синуса y = sin 2πx + ε, ε ~ 𝒩(0, σ²). Сверху пучок моделей μ<sub>X</sub>(x), каждая на своей выборке X; ниже ошибка 𝖤(y − μ<sub>X</sub>(x))² разложена на σ², bias² и variance</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="bundle" width="640" height="380" aria-label="Пучок моделей на перевыборках"></canvas>
+      <canvas id="stack" width="640" height="150" aria-label="Разложение ошибки при выбранной степени"></canvas>
+      <canvas id="curve" width="640" height="320" aria-label="Слагаемые ошибки от степени"></canvas>
+      <div id="noteMain"></div>
+      <div id="noteHonest"></div>
+    </div>
+    <div class="panel">
+      <label>Степень многочлена d: <b id="dv"></b>
+        <input id="deg" type="range" min="0" max="9" value="3">
+      </label>
+      <label>Шум σ: <b id="sv"></b>
+        <input id="noise" type="range" min="0" max="0.6" step="0.05" value="0.25">
+      </label>
+      <label>Размер выборки n: <b id="nv"></b>
+        <input id="n" type="range" min="15" max="150" step="5" value="30">
+      </label>
+      <button id="again" type="button">Другие модели пучка</button>
+      <div class="score" id="score"></div>
+      <div class="legend">
+        <span><i style="background:var(--model-2)"></i>μ<sub>X</sub>(x), модели</span>
+        <span><i style="background:var(--text)"></i>𝖤<sub>X</sub>μ<sub>X</sub>(x), среднее</span>
+        <span><i class="dash"></i>f(x) = sin 2πx</span>
+        <span><span class="swatch-fill" style="background:var(--model)"></span>смещение</span>
+        <span><i class="dot" style="background:var(--train)"></i>выборка первой модели</span>
+        <span><span class="swatch-fill" style="background:var(--text-2)"></span>σ² на столбике</span>
+      </div>
+      <p class="note" id="rough"></p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+// Constants of the experiment: the text of the page reads them from here.
+const RESAMPLES = 800;  // training samples per group: bias^2 and variance come from one, the measured error from another
+const FRESH = 20;        // fresh (x, y) pairs per model of the measured group
+const BUNDLE = 20;       // models shown in the bundle
+const DEGS = Array.from({ length: 10 }, (_, k) => k);
+// A polynomial with more than about n / 2 coefficients has a random-design prediction whose spread over
+// samples is dominated by rare samples with big gaps: the estimate grows with the number of samples
+// instead of settling. The page stops short of that region: d + 1 <= n / 2.
+const maxDegree = (n) => Math.min(9, Math.floor(n / 2) - 1);
+const CONST = { res: RESAMPLES, fresh: FRESH, bundle: BUNDLE, grid: BV_GRID.length, pairs: RESAMPLES * FRESH };
+
+const S = makeBvStreams({ resamples: RESAMPLES, fresh: FRESH, maxN: 150, seed: 1 });
+let cacheKey = "", cache = [], offset = 0, lastMs = 0;
+
+// All ten degrees for the current noise and n: the degree slider only redraws.
+function results() {
+  const noise = +$("noise").value, n = +$("n").value, key = `${noise}|${n}`;
+  if (key !== cacheKey) {
+    const t0 = performance.now();
+    cache = DEGS.filter((k) => k <= maxDegree(n)).map((degree) => bvEstimate(S, { degree, noise, n }));
+    lastMs = performance.now() - t0;
+    cacheKey = key;
+    window.__recomputeMs = lastMs;
+  }
+  return cache;
+}
+
+const LOGHI = 2;
+const clampLog = (v, lo) => Math.max(lo, Math.min(LOGHI, Math.log10(Math.max(v, 1e-12))));
+// The lower bound follows the data, so a fixed floor never fakes a plateau:
+// one decade under the smallest of variance, sum, measurement and a nonzero
+// sigma^2. bias^2 is left out: its corrected estimate hovers around zero once
+// the model can fit sin 2pi x, and a value under the bound is drawn on it.
+function logLow(R) {
+  const vals = R.flatMap((r) => [r.variance, r.sum, r.measured, r.noise]).filter((v) => v > 0);
+  return Math.max(-9, Math.floor(Math.log10(Math.min(...vals))) - 1);
+}
+
+function niceStep(max) {
+  const raw = max / 5, p = 10 ** Math.floor(Math.log10(raw)), r = raw / p;
+  return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 5 ? 5 : 10) * p;
+}
+
+function drawBundle(R, deg, noise, n) {
+  const cv = $("bundle"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [0, 1], [-2, 2]);
+  axes(ctx, f, { xticks: [0, 0.5, 1], yticks: [-2, -1, 0, 1, 2], fmt: (t) => toComma(t, null), xlabel: "x", ylabel: "y" });
+  const r = R[deg], G = BV_GRID;
+  const mean = G.map((_, j) => r.P.reduce((s, row) => s + row[j], 0) / r.P.length);
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  // Bias: the gap between the mean of the models and f.
+  ctx.globalAlpha = 0.3; ctx.fillStyle = css("--model");
+  ctx.beginPath();
+  G.forEach((x, j) => (j ? ctx.lineTo(f.px(x), f.py(mean[j])) : ctx.moveTo(f.px(x), f.py(mean[j]))));
+  for (let j = G.length - 1; j >= 0; j--) ctx.lineTo(f.px(G[j]), f.py(r.f[j]));
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 0.4;
+  for (let k = 0; k < BUNDLE; k++) {
+    const row = r.P[(offset + k) % r.P.length];
+    polyline(ctx, G.map((x, j) => [f.px(x), f.py(row[j])]), css("--model-2"), 1.5);
+  }
+  ctx.globalAlpha = 1;
+  polyline(ctx, G.map((x, j) => [f.px(x), f.py(r.f[j])]), css("--text-2"), 1.5, [5, 4]);
+  polyline(ctx, G.map((x, j) => [f.px(x), f.py(mean[j])]), css("--text"), 2.5);
+  const s = S.a[offset % S.a.length];
+  for (let i = 0; i < n; i++) dot(ctx, f.px(s.x[i]), f.py(bvTruth(s.x[i]) + noise * s.e[i]), css("--train"), { r: 3.5 });
+  ctx.restore();
+}
+
+function drawStack(R, deg) {
+  const cv = $("stack"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const r = R[deg];
+  const parts = [["bias²", Math.max(0, r.bias2), "--model", 0.55], ["variance", r.variance, "--model-2", 0.55], ["σ²", r.noise, "--text-2", 0.35]];
+  const max = Math.max(r.sum, r.measured + r.seMeasured) * 1.08;
+  const f = frame(cv, [0, max], [0, 1], { margin: [20, 28, 20, 42] });
+  const step = niceStep(max), ticks = [];
+  for (let t = 0; t <= max; t += step) ticks.push(+t.toFixed(6));
+  axes(ctx, f, { xticks: ticks, yticks: [], xlabel: "ошибка", ylabel: "ошибка = bias² + variance + σ²;  кольцо — замер на свежих парах ± ст. ошибка", xfmt: (t) => num(t) });
+  let x0 = 0;
+  const bar = [f.py(0.88), f.py(0.42)];
+  for (const [name, v, col, a] of parts) {
+    const w = f.px(x0 + v) - f.px(x0);
+    ctx.globalAlpha = a; ctx.fillStyle = css(col); ctx.fillRect(f.px(x0), bar[0], w, bar[1] - bar[0]);
+    ctx.globalAlpha = 1; ctx.strokeStyle = css(col); ctx.lineWidth = 1.5; ctx.strokeRect(f.px(x0), bar[0], w, bar[1] - bar[0]);
+    if (w > 62) { ctx.fillStyle = css("--text"); ctx.font = font(12); ctx.textAlign = "center"; ctx.textBaseline = "middle"; mathText(ctx, name, f.px(x0) + w / 2, (bar[0] + bar[1]) / 2); }
+    x0 += v;
+  }
+  // Measured error on fresh pairs, with its standard error.
+  const my = f.py(0.17), mx = f.px(r.measured);
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(f.px(r.measured - r.seMeasured), my); ctx.lineTo(f.px(Math.min(max, r.measured + r.seMeasured)), my);
+  ctx.moveTo(f.px(r.measured - r.seMeasured), my - 5); ctx.lineTo(f.px(r.measured - r.seMeasured), my + 5);
+  ctx.moveTo(f.px(Math.min(max, r.measured + r.seMeasured)), my - 5); ctx.lineTo(f.px(Math.min(max, r.measured + r.seMeasured)), my + 5);
+  ctx.stroke();
+  dot(ctx, mx, my, css("--mark"), { hollow: true, r: 4.5 });
+}
+
+function drawCurve(R, deg) {
+  const cv = $("curve"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const lo = logLow(R), step = Math.ceil((LOGHI - lo) / 6);
+  const g = frame(cv, [-0.3, 9.3], [lo, LOGHI], { margin: [52, 28, 150, 44] });
+  const yt = []; for (let t = LOGHI; t >= lo; t -= step) yt.push(t);
+  axes(ctx, g, { xticks: DEGS, yticks: yt, xlabel: "степень d", ylabel: "слагаемые ошибки, лог. шкала", yfmt: (t) => num(10 ** t) });
+  const ly = (v) => g.py(clampLog(v, lo));
+  const look = {
+    bias: { col: "--model", w: 2, dash: [] }, variance: { col: "--model-2", w: 2, dash: [] },
+    noise: { col: "--text-2", w: 1.5, dash: [5, 4] }, sum: { col: "--text", w: 2.5, dash: [] },
+    meas: { col: "--mark", w: 1.5, dash: [2, 3] },
+  };
+  ctx.save(); ctx.beginPath(); ctx.rect(g.ml, g.mt, g.W, g.H); ctx.clip();
+  // Band of one standard error around the sum.
+  ctx.globalAlpha = 0.15; ctx.fillStyle = css("--text");
+  ctx.beginPath();
+  const ks = DEGS.slice(0, R.length);
+  ks.forEach((k) => { const y = ly(R[k].sum + R[k].seSum); k ? ctx.lineTo(g.px(k), y) : ctx.moveTo(g.px(k), y); });
+  for (let k = R.length - 1; k >= 0; k--) ctx.lineTo(g.px(k), ly(Math.max(1e-12, R[k].sum - R[k].seSum)));
+  ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+  const line = (key, pick) => polyline(ctx, ks.map((k) => [g.px(k), ly(pick(R[k]))]), css(look[key].col), look[key].w, look[key].dash);
+  line("bias", (r) => r.bias2); line("variance", (r) => r.variance); line("noise", (r) => r.noise); line("sum", (r) => r.sum);
+  // Measured error: hollow rings with a bar of one standard error.
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 1.5;
+  ks.forEach((k) => {
+    const x = g.px(k);
+    ctx.beginPath(); ctx.moveTo(x, ly(Math.max(1e-12, R[k].measured - R[k].seMeasured))); ctx.lineTo(x, ly(R[k].measured + R[k].seMeasured)); ctx.stroke();
+    dot(ctx, x, ly(R[k].measured), css("--mark"), { hollow: true, r: 3.5 });
+  });
+  ctx.restore();
+  ctx.strokeStyle = css("--mark"); ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(g.px(deg), g.mt); ctx.lineTo(g.px(deg), g.mt + g.H); ctx.stroke(); ctx.setLineDash([]);
+  const end = R[R.length - 1];
+  endLabels(ctx, g, [
+    { text: "variance", y: ly(end.variance), look: look.variance },
+    { text: "сумма", y: ly(end.sum), look: look.sum, strong: true },
+    { text: "замер", y: ly(end.measured), look: look.meas },
+    { text: "bias²", y: ly(end.bias2), look: look.bias },
+    { text: "σ²", y: ly(end.noise), look: look.noise },
+  ]);
+}
+
+function draw() {
+  const noise = +$("noise").value, n = +$("n").value;
+  $("deg").max = maxDegree(n);
+  const deg = Math.min(+$("deg").value, maxDegree(n));
+  $("deg").value = deg;
+  $("dv").textContent = deg; $("sv").textContent = toComma(noise, 2); $("nv").textContent = n;
+  const R = results();
+  drawBundle(R, deg, noise, n);
+  drawStack(R, deg);
+  drawCurve(R, deg);
+  const r = R[deg], best = R.reduce((b, _, k) => (R[k].sum < R[b].sum ? k : b), 0);
+  const pm = (v, se) => `${num(v)} ± ${num(se, 1)}`;
+  const rough = Math.max(r.seSum / r.sum, r.seMeasured / r.measured);
+  $("rough").textContent = rough > 0.2 ? `Оценка грубая: стандартная ошибка ${Math.round(rough * 100)} % от значения` : "";
+  $("score").innerHTML =
+    `<span>bias²</span><span>${num(r.bias2)}</span>` +
+    `<span>variance</span><span>${num(r.variance)}</span>` +
+    `<span>σ²</span><span>${num(r.noise)}</span>` +
+    `<span>сумма</span><span>${pm(r.sum, r.seSum)}</span>` +
+    `<span>замер</span><span>${pm(r.measured, r.seMeasured)}</span>` +
+    `<span>минимум суммы</span><span>d = ${best}</span>`;
+}
+
+function texts() {
+  const paragraphs = (list) => list.map((t) => `<p class="note">${t}</p>`).join("");
+  $("noteMain").innerHTML = paragraphs([
+    "Ошибка 𝖤(y − μ<sub>X</sub>(x))² = σ² + bias² + variance. Шум σ² от модели не зависит и есть нижняя граница. Смещение — закрашенная полоса между средним пучка и f: оно падает с ростом d. Разброс — ширина пучка: он растёт с d, растёт при малом n и растёт с шумом σ",
+    "Кривые выше 100 обрезаны; низ шкалы подстраивается под данные, а bias², который ниже него или чуть ниже нуля из-за поправки, рисуется на нижней границе. \"Минимум суммы\" — по сумме слагаемых, не по замеру. Степень ограничена условием d + 1 ≤ n / 2 и не выше 9",
+  ]);
+  $("noteHonest").innerHTML = paragraphs([
+    `Что здесь оценка. bias² и variance усреднены по сетке из ${CONST.grid} точек на [0, 1] и по ${CONST.res} выборкам; из bias² вычтен variance / ${CONST.res}, шум среднего самого пучка. "Замер" — средний квадрат ошибки на свежих парах (x, y): ${CONST.res} других выборок, на каждую ${CONST.fresh} пар, всего ${CONST.pairs}`,
+    "Разложение — тождество в ожидании, поэтому сумма и замер совпадают с точностью до шума оценки: замер не проверяет формулу, он показывает, что слагаемые — части реальной ошибки. Шум оценки — стандартная ошибка (±) и серая полоса вокруг суммы",
+    "Он мал при средних d и велик при высоких: редкие выборки с большими промежутками между точками дают огромные выбросы многочлена, и дисперсия оценивается грубо",
+    `Ползунки σ и n пересчитывают те же случайные числа, поэтому картина меняется плавно. Пучок показывает ${CONST.bundle} моделей из ${CONST.res}, кнопка берёт следующие`,
+  ]);
+}
+
+["deg", "noise", "n"].forEach((id) => $(id).addEventListener("input", draw));
+$("again").addEventListener("click", () => { offset = (offset + BUNDLE) % RESAMPLES; draw(); });
+texts();
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

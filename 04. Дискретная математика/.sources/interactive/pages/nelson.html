@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница метода Нельсона</title>
+<style>
+/*COMMON_CSS*/
+.gone td { color: var(--text-2); }
+.gone td.term { text-decoration: line-through; }
+.zero td.res { color: var(--text-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница метода Нельсона</h1>
+  <p class="lead">Введи КНФ: скобки-дизъюнкции, соединённые знаком &amp;. Метод перемножает скобки по одной. Для каждого шага видны все произведения слагаемых, этап 1 (повторы литералов и нули), этап 2 (повторы и поглощение) и сокращённая ДНФ после него</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>КНФ</h2>
+        <label>Формула
+          <input id="cnf" type="text" spellcheck="false" autocomplete="off" placeholder="(x1 | x2) &amp; (!x1 | x3)">
+        </label>
+        <p id="ferr" class="err" role="status"></p>
+        <label>Готовый пример
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="(x1 | x2) &amp; (!x1 | x3) &amp; (x2 | !x3)">из конспекта</option>
+            <option value="(x1 | x2) &amp; (!x1 | x2) &amp; (x3 | x4)">две скобки склеиваются</option>
+            <option value="(x1 | x2 | x3) &amp; (!x1 | !x2) &amp; (!x2 | !x3) &amp; (!x1 | !x3)">ровно одна единица из трёх</option>
+            <option value="(x1 | x2) &amp; !x1 &amp; !x2">противоречие, f ≡ 0</option>
+          </select>
+        </label>
+        <p class="note">Скобка — переменные и их отрицания через | или ∨, переменная не больше раза в скобке. Знаки: ! ¬ отрицание, &amp; ∧ конъюнкция. Переменные x1…x6 или x y z w</p>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Шаги метода</h2>
+        <div class="ctl">
+          <button id="prev" aria-label="Шаг назад">←</button>
+          <input id="step" type="range" min="0" max="0" value="0" aria-label="Шаг метода">
+          <button id="next" aria-label="Шаг вперёд">→</button>
+        </div>
+        <div id="detail"></div>
+      </section>
+      <section>
+        <h2>Результат</h2>
+        <div id="result"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+let clauses = [];
+let run = null;
+
+const clauseText = (c) => "(" + c.map(literalText).join(" ∨ ") + ")";
+const cnfText = (cs) => cs.map(clauseText).join(" ∧ ");
+
+function rawText(lits) {
+  return lits.map(literalText).join("");
+}
+
+function fateText(fate, terms) {
+  if (fate === "keep") return "остаётся";
+  if (fate.dup !== undefined) return `повтор слагаемого ${fate.dup + 1}: K ∨ K = K`;
+  return `поглощено слагаемым ${fate.absorbedBy + 1} (${conjunctionText(terms[fate.absorbedBy])}): K ∨ KL = K`;
+}
+
+function renderStep(s) {
+  const f = dnfText(s.left);
+  const g = clauseText(s.right);
+  const rows = s.products.map((p) => {
+    const res = p.zero ? `0 (x${sub(p.clash)} и ¬x${sub(p.clash)})` : conjunctionText(p.term);
+    const note = !p.zero && p.raw.length !== p.term.length ? ", повторы убраны" : "";
+    return `<tr class="${p.zero ? "gone zero" : ""}"><td>${esc(conjunctionText(p.a))} · ${esc(conjunctionText(p.b))}</td><td>${esc(rawText(p.raw))}</td><td class="res">${esc(res)}${note}</td></tr>`;
+  }).join("");
+  const stage2 = s.stage2.map((x, k) => `<tr class="${x.fate === "keep" ? "" : "gone"}"><td>${k + 1}</td><td class="term">${esc(conjunctionText(x.term))}</td><td>${esc(fateText(x.fate, s.d1))}</td></tr>`).join("");
+  return `<p class="note">Шаг ${s.clause - 1}: умножаем на скобку ${s.clause}. Слева сокращённая ДНФ предыдущих скобок, справа скобка, раскрытая в сокращённую ДНФ из её литералов</p>
+    <div class="formula">(${esc(f)}) · ${esc(g)}</div>
+    <h2>Раскрытие скобок и этап 1</h2>
+    <table class="compact"><tr><th>Слагаемые</th><th>Произведение</th><th>После этапа 1</th></tr>${rows}</table>
+    <div class="formula"><b>D₁</b> = ${s.d1.length ? esc(dnfText(s.d1)) : "пусто: все произведения нулевые"}</div>
+    <h2>Этап 2</h2>
+    ${s.d1.length ? `<table class="compact"><tr><th>№</th><th>Слагаемое D₁</th><th>Что с ним</th></tr>${stage2}</table>` : ""}
+    <div class="formula"><b>D₂</b> = ${s.d2.length ? esc(dnfText(s.d2)) : "0"}</div>`;
+}
+
+function render() {
+  const steps = run.steps;
+  $("step").max = steps.length;
+  const k = Math.min(+$("step").value, steps.length);
+  $("step").value = k;
+  $("prev").disabled = k === 0; $("next").disabled = k === steps.length;
+  $("detail").innerHTML = k === 0
+    ? `<div class="formula"><b>Скобка 1</b> = ${esc(clauseText(clauses[0]))}</div>
+       <p class="note">Элементарная дизъюнкция сама является сокращённой ДНФ: её простые импликанты — отдельные литералы. Это начало, дальше скобки умножаются по одной</p>
+       <div class="formula">${esc(dnfText(run.first))}</div>
+       ${steps.length ? "" : '<p class="note">Скобка одна, умножать нечего</p>'}`
+    : renderStep(steps[k - 1]);
+  const n = Math.max(...clauses.flat().map((l) => l.v));
+  if (run.zero) {
+    $("result").innerHTML = `<div class="formula"><b>f</b> ≡ 0: произведение обратилось в ноль, у такой функции сокращённой ДНФ нет</div>`;
+    return;
+  }
+  const ok = dnfVector(run.result, n).every((v, i) => v === cnfVector(clauses, n)[i]);
+  $("result").innerHTML = `<div class="formula"><b>Сокращённая ДНФ</b> (${run.result.length} прост${run.result.length === 1 ? "ая импликанта" : "ых импликант"})<br>${esc(dnfText(run.result))}</div>
+    <p class="check">${ok ? "Проверка: ДНФ и КНФ равны на всех " + (1 << n) + " наборах" : "ОШИБКА: ДНФ не равна КНФ"}</p>`;
+}
+
+function apply() {
+  const text = $("cnf").value.trim();
+  try {
+    if (!text) throw new FormulaError("введи КНФ", 0);
+    clauses = parseCnf(text);
+    run = nelson(clauses);
+    $("cnf").removeAttribute("aria-invalid"); $("ferr").textContent = "";
+    render();
+  } catch (e) {
+    if (!(e instanceof FormulaError)) throw e;
+    $("cnf").setAttribute("aria-invalid", "true");
+    $("ferr").textContent = `${e.message} (позиция ${e.pos + 1})`;
+  }
+}
+
+$("cnf").addEventListener("input", () => { $("step").value = 0; apply(); });
+$("preset").addEventListener("input", () => {
+  if (!$("preset").value) return;
+  $("cnf").value = $("preset").value; $("preset").value = ""; $("step").value = 0; apply();
+});
+$("step").addEventListener("input", render);
+$("prev").addEventListener("click", () => { $("step").value = +$("step").value - 1; render(); });
+$("next").addEventListener("click", () => { $("step").value = +$("step").value + 1; render(); });
+
+$("cnf").value = "(x1 | x2) & (!x1 | x3) & (x2 | !x3)";
+apply();
+</script>
+</body>
+</html>

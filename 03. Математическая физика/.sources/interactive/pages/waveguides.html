@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница волноводов</title>
+<style>
+/*COMMON_CSS*/
+.legend i { background: currentColor; }
+.legend { color: var(--text); }
+.legend .m0 i { background: var(--ddlc-series-3); }
+.legend .m1 i { background: var(--ddlc-series-2); }
+.legend .m2 i { background: var(--ddlc-monika-eye); }
+.legend .m3 i { background: var(--ddlc-series-1); }
+.legend .m4 i { background: var(--ddlc-sayori-eye); }
+.legend span { white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница волноводов</h1>
+  <p class="lead">Три волновода, которые можно крутить на своих параметрах. Круглый слабонаправляющий: дисперсионные кривые, отсечка, поверхностные и вытекающие моды. Симметричный и несимметричный планарные: графическое решение, число мод, профили. Обозначения такие же, как в заметках темы</p>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-round" aria-selected="true" aria-controls="pane-round">Круглый волновод</button>
+    <button type="button" role="tab" id="tab-sym" aria-selected="false" aria-controls="pane-sym">Симметричный планарный</button>
+    <button type="button" role="tab" id="tab-asym" aria-selected="false" aria-controls="pane-asym">Несимметричный планарный</button>
+  </div>
+
+  <!-- ============================================================ round -->
+  <div class="wrap" id="pane-round" role="tabpanel">
+    <div class="panel">
+      <div class="sec">
+        <h2>Параметры</h2>
+        <label>V = <b id="rVval">8,00</b>
+          <input id="rV" type="range" min="0.1" max="12" step="0.01" value="8">
+        </label>
+        <div class="field2">
+          <label>ε<sub>i</sub> сердцевины
+            <input id="rEi" type="text" inputmode="decimal" value="2,3839" aria-label="Диэлектрическая проницаемость сердцевины">
+          </label>
+          <label>ε<sub>e</sub> оболочки
+            <input id="rEe" type="text" inputmode="decimal" value="2,2124" aria-label="Диэлектрическая проницаемость оболочки">
+          </label>
+        </div>
+        <p class="err" id="rErr" role="status"></p>
+        <div class="presets">
+          <button type="button" id="rP1">V = 8, поверхностные</button>
+          <button type="button" id="rP2">V = 0,5, вытекающие</button>
+        </div>
+      </div>
+      <div class="sec">
+        <h2>Мода для профиля и карты</h2>
+        <div class="field2">
+          <label>Азимутальный номер m
+            <select id="rM"><option>0</option><option selected>1</option><option>2</option><option>3</option><option>4</option></select>
+          </label>
+          <label>Радиальный номер n
+            <select id="rN"><option>1</option></select>
+          </label>
+        </div>
+        <label>Профиль и карта до r =
+          <select id="rR"><option>1,5</option><option>2</option><option selected>2,5</option><option>3</option></select>
+        </label>
+        <label class="chk"><input type="checkbox" id="rLog"> Логарифмическая шкала профиля</label>
+        <label class="chk"><input type="checkbox" id="rEdge"> Карта: нормировка по границе r = 1</label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Поле в сечении</h2>
+        <canvas id="rMap" class="sq" role="img" aria-label="Карта поля в сечении волновода"></canvas>
+        <p class="note">Показана Re u(r) cos mφ, фаза выбрана так, что u(1) вещественно. Кружок — граница сердцевины. Синий и красный — знаки поля, насыщенность — амплитуда. Моду выбирают таблицей ниже или полями m и n, V задаёт ползунок или щелчок по кривым</p>
+      </section>
+      <section>
+        <h2>Дисперсионные кривые λ(V)</h2>
+        <canvas id="rDisp" role="img" aria-label="Дисперсионные кривые круглого волновода"></canvas>
+        <div class="legend" id="rLegend"></div>
+        <p class="note">Правее отсечки сплошная линия — вещественный корень λ<sub>m1</sub>. Левее отсечки сплошная линия — Re λ, штриховая — Im λ вытекающей моды, продолженной по V от точки отсечки. Кружок на прямой λ = V — отсечка V<sub>c</sub>, пунктир — текущий V. Щелчок или протяжка по графику задаёт V</p>
+      </section>
+      <section>
+        <h2>Корни при текущем V</h2>
+        <div class="score" id="rScore"></div>
+        <div class="scroll" id="rTable"></div>
+        <p class="note" id="rOthers"></p>
+        <p class="note">k = V/√(ε<sub>i</sub> − ε<sub>e</sub>), β² = k²ε<sub>i</sub> − λ², n<sub>eff</sub> = β/k. У поверхностной волны α = iκ, у вытекающей Re α &gt; 0 и Im α &lt; 0. Im β &gt; 0 — затухание вдоль оси. Щелчок по строке выбирает моду для профиля</p>
+      </section>
+      <section>
+        <h2>Радиальный профиль |u(r)|</h2>
+        <canvas id="rProf" role="img" aria-label="Радиальный профиль выбранной моды"></canvas>
+        <p class="note" id="rProfNote"></p>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============================================================ symmetric planar -->
+  <div class="wrap" id="pane-sym" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="sec">
+        <h2>Параметры</h2>
+        <div class="field2">
+          <label>n<sub>1</sub> сердцевины
+            <input id="sN1" type="text" inputmode="decimal" value="1,45" aria-label="Показатель преломления сердцевины">
+          </label>
+          <label>n<sub>2</sub> оболочки
+            <input id="sN2" type="text" inputmode="decimal" value="1,44" aria-label="Показатель преломления оболочки">
+          </label>
+          <label>λ<sub>0</sub>, мкм
+            <input id="sL" type="text" inputmode="decimal" value="1,55" aria-label="Длина волны в вакууме">
+          </label>
+          <label>Полутолщина d, мкм
+            <input id="sD" type="text" inputmode="decimal" value="16" aria-label="Полутолщина сердцевины">
+          </label>
+        </div>
+        <label>Поляризация для графика и профиля
+          <select id="sPol"><option value="TE">TE</option><option value="TM">TM</option></select>
+        </label>
+        <p class="err" id="sErr" role="status"></p>
+        <div class="presets">
+          <button type="button" id="sP1">1,45 / 1,44, d = 16 мкм</button>
+          <button type="button" id="sP2">3,5 / 1,45, d = 0,25 мкм</button>
+        </div>
+      </div>
+      <div class="sec">
+        <h2>Мода</h2>
+        <label>Номер j
+          <select id="sJ"><option>0</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Графическое решение</h2>
+        <div class="score" id="sScore"></div>
+        <canvas id="sGraph" class="sq" role="img" aria-label="Графическое решение уравнений мод"></canvas>
+        <div class="legend" id="sLegend"></div>
+        <p class="note">Корни — пересечения ветвей Y = qX tan X (чётные) и Y = −qX cot X (нечётные) с четвертью окружности X² + Y² = V², где X = κd, Y = γd. Для TE q = 1, для TM q = n<sub>2</sub>²/n<sub>1</sub>². Ветвь номера j пересекает окружность при V &gt; jπ/2</p>
+      </section>
+      <section>
+        <h2>Эффективные показатели TE и TM</h2>
+        <div class="scroll" id="sTable"></div>
+        <p class="note">Моды нумеруются по убыванию n<sub>eff</sub>. Щелчок по строке выбирает моду для профиля</p>
+      </section>
+      <section>
+        <h2>Профиль выбранной моды</h2>
+        <canvas id="sProf" role="img" aria-label="Профиль моды симметричного волновода"></canvas>
+        <p class="note" id="sProfNote"></p>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============================================================ asymmetric planar -->
+  <div class="wrap" id="pane-asym" role="tabpanel" hidden>
+    <div class="panel">
+      <div class="sec">
+        <h2>Параметры</h2>
+        <div class="field2">
+          <label>n<sub>a</sub> покровного слоя
+            <input id="aNa" type="text" inputmode="decimal" value="1,44" aria-label="Показатель преломления покровного слоя">
+          </label>
+          <label>n<sub>f</sub> волноводного слоя
+            <input id="aNf" type="text" inputmode="decimal" value="1,45" aria-label="Показатель преломления волноводного слоя">
+          </label>
+          <label>n<sub>s</sub> подложки
+            <input id="aNs" type="text" inputmode="decimal" value="1,44" aria-label="Показатель преломления подложки">
+          </label>
+          <label>λ<sub>0</sub>, мкм
+            <input id="aL" type="text" inputmode="decimal" value="1,55" aria-label="Длина волны в вакууме">
+          </label>
+        </div>
+        <label>Толщина слоя h, мкм
+          <input id="aH" type="text" inputmode="decimal" value="32" aria-label="Толщина волноводного слоя">
+        </label>
+        <label>Поляризация
+          <select id="aPol"><option value="TE">TE</option><option value="TM">TM</option></select>
+        </label>
+        <p class="err" id="aErr" role="status"></p>
+        <div class="presets">
+          <button type="button" id="aP1">Слабый набор</button>
+          <button type="button" id="aP2">Сильный набор</button>
+        </div>
+      </div>
+      <div class="sec">
+        <h2>Мода</h2>
+        <label>Номер j
+          <select id="aJ"><option>0</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Функция F(n<sub>eff</sub>) и её корни</h2>
+        <div class="score" id="aScore"></div>
+        <canvas id="aF" role="img" aria-label="Функция F и её корни"></canvas>
+        <div class="legend" id="aLegend"></div>
+        <p class="note">F<sub>j</sub> = γ<sub>f</sub>h − arctan(c<sub>a</sub>δ<sub>a</sub>/γ<sub>f</sub>) − arctan(c<sub>s</sub>δ<sub>s</sub>/γ<sub>f</sub>) − jπ. Кривые F<sub>j</sub> смещены на π друг от друга и убывают по n<sub>eff</sub>. Корень есть, если F<sub>j</sub> &gt; 0 на левом конце n<sub>eff</sub> = max(n<sub>a</sub>, n<sub>s</sub>)</p>
+      </section>
+      <section>
+        <h2>Моды и толщины отсечки</h2>
+        <div class="scroll" id="aTable"></div>
+        <p class="note">Γ — доля ∫f² dz, лежащая в волноводном слое. Строка без n<sub>eff</sub> — мода, которая при этой толщине не направляется; её h<sub>c</sub> больше h. Щелчок по строке выбирает моду для профиля</p>
+      </section>
+      <section>
+        <h2>Профиль выбранной моды</h2>
+        <canvas id="aProf" role="img" aria-label="Профиль моды несимметричного волновода"></canvas>
+        <p class="note" id="aProfNote"></p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*WGCORE*/
+
+// ====================================================================== tabs
+const PANES = ["round", "sym", "asym"];
+let currentTab = "round";
+const drawers = {};
+
+function showTab(id) {
+  currentTab = id;
+  for (const p of PANES) {
+    $(`pane-${p}`).hidden = p !== id;
+    $(`tab-${p}`).setAttribute("aria-selected", p === id ? "true" : "false");
+  }
+  drawers[id]();
+}
+for (const p of PANES) $(`tab-${p}`).addEventListener("click", () => showTab(p));
+
+// reads a positive number from a text field; marks the field invalid and returns NaN otherwise
+function readField(id) {
+  const el = $(id);
+  const v = parseNum(el.value);
+  const ok = Number.isFinite(v) && v > 0;
+  el.setAttribute("aria-invalid", ok ? "false" : "true");
+  return ok ? v : NaN;
+}
+
+function fillSelect(sel, count, keep) {
+  const want = Math.min(keep, count - 1);
+  sel.innerHTML = Array.from({ length: count }, (_, i) => `<option${i === want ? " selected" : ""}>${i}</option>`).join("");
+}
+
+// ====================================================================== round waveguide
+const M_VARS = ["--ddlc-series-3", "--ddlc-series-2", "--ddlc-monika-eye", "--ddlc-series-1", "--ddlc-sayori-eye"];
+const M_CLASSES = ["m0", "m1", "m2", "m3", "m4"];
+const V_MAX = 12;
+
+const rs = { V: 8, epsI: 2.3839, epsE: 2.2124, m: 1, n: 1, rmax: 2.5, log: false, edge: false, rows: [], mode: null, curves: null };
+
+// curves do not depend on the waveguide: lambda(V) is universal; built once, on the first drawing
+function roundCurves() {
+  if (!rs.curves) {
+    rs.curves = [0, 1, 2, 3, 4].map((m) => ({
+      surf: surfaceCurve(m, V_MAX, 280),
+      leaky: m >= 1 ? leakyCurve(m) : null,
+      vc: cutoffV(m, 1),
+    }));
+  }
+  return rs.curves;
+}
+
+function roundCompute() {
+  rs.rows = [0, 1, 2, 3, 4].map((m) => {
+    const surf = surfaceRoots(m, rs.V);
+    return { m, surf, mode: circularMode(m, 1, rs.V, rs.epsI, rs.epsE, surf) };
+  });
+  const row = rs.rows[rs.m];
+  const count = Math.max(1, row.surf.length);
+  if (rs.n > count) rs.n = count;
+  const sel = $("rN");
+  sel.innerHTML = Array.from({ length: count }, (_, i) => `<option${i + 1 === rs.n ? " selected" : ""}>${i + 1}</option>`).join("");
+  rs.mode = circularMode(rs.m, rs.n, rs.V, rs.epsI, rs.epsE, row.surf);
+}
+
+function roundDrawDisp() {
+  const cv = $("rDisp");
+  const P = new Plot(cv, 0.6, [0, V_MAX], [-7, 9], { l: 44, r: 16, t: 12, b: 34 });
+  P.frame("V", "λ", { xticks: niceTicks(0, V_MAX, 6), yticks: niceTicks(-7, 9, 8) });
+  P.clipStart();
+  P.hline(0, { color: css(FRAME) });
+  P.line([0, V_MAX], [0, V_MAX], { color: css(HELP), width: 1.5, dash: [2, 3] });
+  P.clipEnd();
+  P.text("λ = V", P.X(8.3), P.Y(8.3) - 8, { color: css(LABEL) });
+  const curves = roundCurves();
+  P.clipStart();
+  curves.forEach((c, m) => {
+    const color = css(M_VARS[m]);
+    P.line(c.surf.V, c.surf.lambda, { color, width: 2.4 });
+    if (c.leaky) {
+      P.line(c.leaky.V, c.leaky.re, { color, width: 2.4 });
+      P.line(c.leaky.V, c.leaky.im, { color, width: 2, dash: [6, 4] });
+    }
+  });
+  P.clipEnd();
+  curves.forEach((c, m) => {
+    const color = css(M_VARS[m]);
+    P.dot(c.vc, c.vc, { color, fill: false, r: 4 });
+    const end = c.surf.lambda[c.surf.lambda.length - 1];
+    P.text(`m = ${m}`, P.X(V_MAX) - 4, P.Y(end) - 6, { color, align: "right" });
+  });
+  P.vline(rs.V);
+  rs.rows.forEach((row) => {
+    const color = css(M_VARS[row.m]);
+    const md = row.mode;
+    if (!md) return;
+    P.dot(rs.V, md.lambda[0], { color, r: 5 });
+    if (md.type === "leaky") P.dot(rs.V, md.lambda[1], { color, r: 5, fill: false });
+  });
+  rs.disp = P;
+}
+
+function roundTableHtml() {
+  const head = "<tr><th class='l'>m</th><th class='l'>Тип</th><th>λ</th><th>α</th><th>β</th><th>n<sub>eff</sub></th></tr>";
+  const rows = rs.rows.map((row) => {
+    const md = row.mode;
+    const sel = row.m === rs.m ? " sel" : "";
+    if (!md) return `<tr class="pick${sel}" data-m="${row.m}"><td class="l">${row.m}</td><td class="l" colspan="5">на самой отсечке</td></tr>`;
+    const alpha = md.type === "surface" ? `i·${fmt(md.kappa, 4)}` : fmtC(md.alpha, 4);
+    const lam = md.type === "surface" ? fmt(md.lambda[0], 4) : fmtC(md.lambda, 4);
+    const beta = md.type === "surface" ? fmt(md.beta[0], 4) : fmtC(md.beta, 4);
+    const neff = md.type === "surface" ? fmt(md.neff[0], 5) : fmtC(md.neff, 5);
+    const type = md.type === "surface" ? "<span class='surf'>поверхностная</span>" : "<span class='leak'>вытекающая</span>";
+    return `<tr class="pick${sel}" data-m="${row.m}"><td class="l">${row.m}</td><td class="l">${type}</td><td>${lam}</td><td>${alpha}</td><td>${beta}</td><td>${neff}</td></tr>`;
+  });
+  const others = rs.rows.map((row) => `m = ${row.m}: ${row.surf.slice(1).map((r) => fmt(r.lambda, 4)).join("; ") || "—"}`).join(" · ");
+  $("rOthers").textContent = `Другие поверхностные корни λ_mn, n ≥ 2. ${others}`;
+  return `<table class="compact">${head}${rows.join("")}</table>`;
+}
+
+function roundDrawTable() {
+  const k = rs.V / Math.sqrt(rs.epsI - rs.epsE);
+  const na = Math.sqrt(rs.epsI - rs.epsE);
+  const span = (a, b) => `<span>${a}</span><span>${b}</span>`;
+  $("rScore").innerHTML = [
+    span("V", fmt(rs.V, 3)),
+    span("k = V/√(ε<sub>i</sub> − ε<sub>e</sub>)", fmt(k, 4)),
+    span("Числовая апертура √(ε<sub>i</sub> − ε<sub>e</sub>)", fmt(na, 5)),
+    span("√ε<sub>e</sub> &lt; n<sub>eff</sub> &lt; √ε<sub>i</sub> для поверхностных", `${fmt(Math.sqrt(rs.epsE), 4)} … ${fmt(Math.sqrt(rs.epsI), 4)}`),
+  ].join("");
+  $("rTable").innerHTML = roundTableHtml();
+  for (const tr of $("rTable").querySelectorAll("tr.pick")) {
+    tr.addEventListener("click", () => {
+      rs.m = +tr.dataset.m;
+      $("rM").value = String(rs.m);
+      rs.n = 1;
+      roundUpdate();
+    });
+  }
+}
+
+// the radial table of the selected mode: r, re u, im u
+function roundProfileData(count = 500) {
+  const rsList = Array.from({ length: count }, (_, i) => rs.rmax * i / (count - 1));
+  const u = circularProfile(rs.mode, rsList);
+  return { r: rsList, re: u.map((z) => z[0]), im: u.map((z) => z[1]), abs: u.map((z) => Math.hypot(z[0], z[1])) };
+}
+
+function roundDrawProfile() {
+  const md = rs.mode;
+  const note = $("rProfNote");
+  if (!md) {
+    note.textContent = "При этих параметрах такой моды нет.";
+    return;
+  }
+  const d = roundProfileData();
+  const top = Math.max(...d.abs);
+  let yr;
+  let ys;
+  if (rs.log) {
+    const floor = Math.max(1e-12, Math.min(...d.abs.filter((v) => v > 0)));
+    ys = d.abs.map((v) => Math.log10(Math.max(v, floor)));
+    yr = [Math.floor(Math.log10(floor)), Math.ceil(Math.log10(top))];
+    if (yr[1] <= yr[0]) yr[1] = yr[0] + 1;
+  } else {
+    ys = d.abs;
+    yr = [0, top * 1.08];
+  }
+  const P = new Plot($("rProf"), 0.5, [0, rs.rmax], yr);
+  const yt = rs.log ? niceTicks(yr[0], yr[1], 6).filter((t) => Number.isInteger(t)) : undefined;
+  P.frame("r", rs.log ? "lg |u|" : "|u|", { yticks: yt });
+  P.rect(0, 1, yr[0], yr[1], css("--panel"));
+  P.vline(1, { dash: [6, 4] });
+  P.clipStart();
+  P.line(d.r, ys, { color: css(M_VARS[md.m]), width: 2.6 });
+  P.clipEnd();
+  P.text("сердцевина", P.X(0.5), P.Y(yr[1]) + 16, { align: "center" });
+  P.text("оболочка", P.X(1 + (rs.rmax - 1) / 2), P.Y(yr[1]) + 16, { align: "center" });
+  const lam = md.type === "surface" ? fmt(md.lambda[0], 4) : fmtC(md.lambda, 4);
+  note.textContent = md.type === "surface"
+    ? `m = ${md.m}, n = ${md.n}, λ = ${lam}. В оболочке |u| убывает как K${md.m}(κr), κ = ${fmt(md.kappa, 3)}. Профиль нормирован так, что u(1) = 1, пунктир — граница сердцевины`
+    : `m = ${md.m}, λ = ${lam}. В оболочке |u| растёт как e^(|Im α| r), |Im α| = ${fmt(Math.abs(md.alpha[1]), 3)}: энергия, излучённая сердцевиной раньше, ушла дальше. Профиль нормирован так, что u(1) = 1`;
+}
+
+function roundDrawMap() {
+  const cv = $("rMap");
+  const md = rs.mode;
+  const side = Math.min(520, Math.max(240, cv.getBoundingClientRect().width || 400));
+  const dpr = window.devicePixelRatio || 1;
+  cv.style.height = `${side}px`;
+  cv.width = Math.round(side * dpr);
+  cv.height = Math.round(side * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, side, side);
+  if (!md) return;
+  const N = 220;
+  const d = roundProfileData(600);
+  const scale = rs.edge ? 1 : Math.max(...d.abs);
+  const pos = rgbOf(css("--c0"));
+  const neg = rgbOf(css("--c1"));
+  const bg = rgbOf(css("--surface"));
+  const ink = css("--text");
+  const img = new ImageData(N, N);
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const x = ((i + 0.5) / N * 2 - 1) * rs.rmax;
+      const y = (1 - (j + 0.5) / N * 2) * rs.rmax;
+      const r = Math.hypot(x, y);
+      const o = 4 * (j * N + i);
+      if (r > rs.rmax) { img.data[o + 3] = 0; continue; }
+      const f = r / rs.rmax * (d.r.length - 1);
+      const k = Math.min(d.r.length - 2, Math.floor(f));
+      const t = f - k;
+      const u = d.re[k] + t * (d.re[k + 1] - d.re[k]);
+      let v = u * Math.cos(md.m * Math.atan2(y, x)) / scale;
+      v = Math.max(-1, Math.min(1, v));
+      const a = Math.pow(Math.abs(v), 0.6);
+      const c = v >= 0 ? pos : neg;
+      for (let q = 0; q < 3; q++) img.data[o + q] = Math.round(bg[q] + (c[q] - bg[q]) * a);
+      img.data[o + 3] = 255;
+    }
+  }
+  const off = document.createElement("canvas");
+  off.width = N; off.height = N;
+  off.getContext("2d").putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, side, side);
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.arc(side / 2, side / 2, side / 2 / rs.rmax, 0, 2 * Math.PI);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(side / 2, side / 2, side / 2 - 0.5, 0, 2 * Math.PI);
+  ctx.strokeStyle = css(FRAME);
+  ctx.stroke();
+}
+
+function roundLegend() {
+  $("rLegend").innerHTML = [0, 1, 2, 3, 4].map((m) => `<span class="${M_CLASSES[m]}"><i></i>m = ${m}</span>`).join("")
+    + "<span><i style='width:14px;height:0;border-top:3px dashed currentColor;background:none'></i>Im λ</span>"
+    + "<span><span class='dot fill'></span>корень λ<sub>m1</sub> при текущем V</span>"
+    + "<span><span class='dot'></span>отсечка V<sub>c</sub> и Im λ при текущем V</span>";
+}
+
+function roundDraw() {
+  roundDrawDisp();
+  roundDrawTable();
+  roundDrawProfile();
+  roundDrawMap();
+}
+
+function roundUpdate() {
+  $("rVval").textContent = fmt(rs.V, 2);
+  roundCompute();
+  roundDraw();
+}
+
+function roundSetV(v) {
+  rs.V = Math.min(V_MAX, Math.max(0.1, v));
+  $("rV").value = String(rs.V);
+  roundUpdate();
+}
+
+function roundReadFields() {
+  const ei = readField("rEi");
+  const ee = readField("rEe");
+  const err = $("rErr");
+  if (!Number.isFinite(ei) || !Number.isFinite(ee)) { err.textContent = "Нужны положительные числа"; return false; }
+  if (!(ei > ee)) { err.textContent = "Нужно ε_i > ε_e: сердцевина плотнее оболочки"; return false; }
+  err.textContent = "";
+  rs.epsI = ei; rs.epsE = ee;
+  return true;
+}
+
+function roundPreset(V, m) {
+  rs.V = V; rs.m = m; rs.n = 1;
+  $("rV").value = String(V);
+  $("rM").value = String(m);
+  $("rEi").value = "2,3839"; $("rEe").value = "2,2124";
+  roundReadFields();
+  roundUpdate();
+}
+
+$("rV").addEventListener("input", () => { rs.V = +$("rV").value; roundUpdate(); });
+$("rEi").addEventListener("input", () => { if (roundReadFields()) roundUpdate(); });
+$("rEe").addEventListener("input", () => { if (roundReadFields()) roundUpdate(); });
+$("rM").addEventListener("input",() => { rs.m = +$("rM").value; rs.n = 1; roundUpdate(); });
+$("rN").addEventListener("input",() => { rs.n = +$("rN").value; roundUpdate(); });
+$("rR").addEventListener("input",() => { rs.rmax = parseNum($("rR").value); roundDrawProfile(); roundDrawMap(); });
+$("rLog").addEventListener("input",() => { rs.log = $("rLog").checked; roundDrawProfile(); });
+$("rEdge").addEventListener("input",() => { rs.edge = $("rEdge").checked; roundDrawMap(); });
+$("rP1").addEventListener("click", () => roundPreset(8, 1));
+$("rP2").addEventListener("click", () => roundPreset(0.5, 1));
+{
+  const cv = $("rDisp");
+  const set = (e) => {
+    const box = cv.getBoundingClientRect();
+    if (rs.disp) roundSetV(rs.disp.invX(e.clientX - box.left));
+  };
+  cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); set(e); });
+  cv.addEventListener("pointermove", (e) => { if (e.buttons) set(e); });
+}
+drawers.round = () => { roundLegend(); roundUpdate(); };
+
+// ====================================================================== symmetric planar waveguide
+const ss = { n1: 1.45, n2: 1.44, lam: 1.55, d: 16, pol: "TE", j: 0, te: null, tm: null };
+
+function symCompute() {
+  ss.te = symModes(ss.n1, ss.n2, ss.lam, ss.d, "TE");
+  ss.tm = symModes(ss.n1, ss.n2, ss.lam, ss.d, "TM");
+  const count = ss.te.modes.length;
+  if (ss.j >= count) ss.j = count - 1;
+  fillSelect($("sJ"), count, ss.j);
+}
+
+function symDrawGraph() {
+  const res = ss.pol === "TE" ? ss.te : ss.tm;
+  const V = res.V;
+  const top = V * 1.06;
+  const P = new Plot($("sGraph"), 1, [0, top], [0, top], { l: 46, r: 14, t: 12, b: 34 });
+  P.frame("X = κd", "Y = γd");
+  P.clipStart();
+  for (let j = 1; j * Math.PI / 2 < top; j++) P.vline(j * Math.PI / 2, { color: css(HELP), dash: [2, 4], width: 1 });
+  const even = css("--c0");
+  const odd = css("--c1");
+  for (const br of symCurves(V, res.q)) {
+    P.line(br.pts.map((p) => p[0]), br.pts.map((p) => p[1]), { color: br.parity === "even" ? even : odd, width: 2.2 });
+  }
+  const arc = Array.from({ length: 241 }, (_, i) => (Math.PI / 2) * i / 240);
+  P.line(arc.map((a) => V * Math.cos(a)), arc.map((a) => V * Math.sin(a)), { color: css("--text"), width: 2 });
+  P.clipEnd();
+  for (const m of res.modes) {
+    P.dot(m.X, m.Y, { color: m.j === ss.j ? css("--accent") : css("--text"), r: m.j === ss.j ? 6 : 4 });
+    P.text(String(m.j), P.X(m.X) + 7, P.Y(m.Y) - 5, { color: css("--text"), size: 11 });
+  }
+  $("sLegend").innerHTML = "<span><i style='background:var(--c0)'></i>чётные ветви Y = qX tan X</span>"
+    + "<span><i style='background:var(--c1)'></i>нечётные ветви Y = −qX cot X</span>"
+    + `<span><i style='background:var(--text)'></i>окружность радиуса V = ${fmt(V, 2)}</span>`
+    + "<span><span class='dot fill'></span>корень, цифра — номер j</span>"
+    + "<span><i style='background:none;border-top:2px dotted var(--text-2);height:0'></i>асимптоты X = jπ/2</span>";
+}
+
+function symDrawTable() {
+  const te = ss.te;
+  const tm = ss.tm;
+  const NA = Math.sqrt(ss.n1 ** 2 - ss.n2 ** 2);
+  const k0 = te.k0;
+  const span = (a, b) => `<span>${a}</span><span>${b}</span>`;
+  $("sScore").innerHTML = [
+    span("V = k<sub>0</sub>d·NA", fmt(te.V, 3)),
+    span("Число мод M = ⌊2V/π⌋ + 1", String(te.M)),
+    span("Найдено корней, TE и TM", `${te.modes.length} и ${tm.modes.length}`),
+    span("NA = √(n<sub>1</sub>² − n<sub>2</sub>²), k<sub>0</sub>", `${fmt(NA, 4)}, ${fmt(k0, 4)} мкм⁻¹`),
+    span("Критическая полутолщина πj/(2k<sub>0</sub>NA), j = 1", `${fmt(Math.PI / (2 * k0 * NA), 4)} мкм`),
+  ].join("");
+  const head = "<tr><th class='l'>j</th><th class='l'>Чётность</th><th>κd (TE)</th><th>γd (TE)</th><th>n<sub>eff</sub> TE</th><th>n<sub>eff</sub> TM</th><th>TE − TM</th></tr>";
+  const rows = te.modes.map((m, i) => {
+    const t = tm.modes[i];
+    const diff = t ? m.neff - t.neff : NaN;
+    return `<tr class="pick${m.j === ss.j ? " sel" : ""}" data-j="${m.j}"><td class="l">${m.j}</td><td class="l">${m.parity === "even" ? "чётная" : "нечётная"}</td>`
+      + `<td>${fmt(m.X, 4)}</td><td>${fmt(m.Y, 4)}</td><td>${fmt(m.neff, 7)}</td><td>${t ? fmt(t.neff, 7) : "—"}</td><td>${fmtG(diff, 3)}</td></tr>`;
+  });
+  $("sTable").innerHTML = `<table>${head}${rows.join("")}</table>`;
+  for (const tr of $("sTable").querySelectorAll("tr.pick")) {
+    tr.addEventListener("click", () => { ss.j = +tr.dataset.j; $("sJ").value = String(ss.j); symDraw(); });
+  }
+}
+
+function symDrawProfile() {
+  const res = ss.pol === "TE" ? ss.te : ss.tm;
+  const m = res.modes[ss.j];
+  const note = $("sProfNote");
+  if (!m) { note.textContent = "Мод нет."; return; }
+  const xs = Array.from({ length: 601 }, (_, i) => -3 + 6 * i / 600);
+  const ys = xs.map((x) => symField(m, x));
+  const P = new Plot($("sProf"), 0.45, [-3, 3], [-1.1, 1.1]);
+  P.frame("x/d", ss.pol === "TE" ? "E_y" : "H_y");
+  P.rect(-1, 1, -1.1, 1.1, css("--panel"));
+  P.vline(-1, { dash: [6, 4] });
+  P.vline(1, { dash: [6, 4] });
+  P.hline(0, { color: css(FRAME) });
+  P.clipStart();
+  P.line(xs, ys, { color: css(m.parity === "even" ? "--c0" : "--c1"), width: 2.6 });
+  P.clipEnd();
+  P.text("сердцевина", P.X(0), P.Y(1.1) + 16, { align: "center" });
+  note.textContent = `${ss.pol}${m.j}, ${m.parity === "even" ? "чётная" : "нечётная"}: n_eff = ${fmt(m.neff, 6)}, κd = ${fmt(m.X, 3)}, γd = ${fmt(m.Y, 3)}. Спад в оболочке на длине d/γd = ${fmt(ss.d / m.Y, 3)} мкм`;
+}
+
+function symDraw() {
+  symDrawGraph();
+  symDrawTable();
+  symDrawProfile();
+}
+
+function symUpdate() {
+  const n1 = readField("sN1");
+  const n2 = readField("sN2");
+  const lam = readField("sL");
+  const d = readField("sD");
+  const err = $("sErr");
+  if (![n1, n2, lam, d].every(Number.isFinite)) { err.textContent = "Нужны положительные числа"; return; }
+  if (!(n1 > n2)) { err.textContent = "Нужно n_1 > n_2: сердцевина плотнее оболочки"; return; }
+  err.textContent = "";
+  Object.assign(ss, { n1, n2, lam, d });
+  symCompute();
+  symDraw();
+}
+
+for (const id of ["sN1", "sN2", "sL", "sD"]) $(id).addEventListener("input", symUpdate);
+$("sPol").addEventListener("input",() => { ss.pol = $("sPol").value; symDraw(); });
+$("sJ").addEventListener("input",() => { ss.j = +$("sJ").value; symDraw(); });
+function symPreset(n1, n2, lam, d) {
+  $("sN1").value = n1; $("sN2").value = n2; $("sL").value = lam; $("sD").value = d;
+  ss.j = 0;
+  symUpdate();
+}
+$("sP1").addEventListener("click", () => symPreset("1,45", "1,44", "1,55", "16"));
+$("sP2").addEventListener("click", () => symPreset("3,5", "1,45", "1,55", "0,25"));
+drawers.sym = () => symUpdate();
+
+// ====================================================================== asymmetric planar waveguide
+const as = { na: 1.44, nf: 1.45, ns: 1.44, lam: 1.55, h: 32, pol: "TE", j: 0, res: null };
+const F_VARS = ["--ddlc-series-3", "--ddlc-series-2", "--ddlc-monika-eye", "--ddlc-series-1", "--ddlc-sayori-eye"];
+
+function asymCompute() {
+  as.res = asymModes(as.na, as.nf, as.ns, as.lam, as.h, as.pol);
+  const count = Math.max(1, as.res.modes.length);
+  if (as.j >= count) as.j = count - 1;
+  fillSelect($("aJ"), count, as.j);
+}
+
+function asymRowsCount() {
+  return Math.min(14, as.res.modes.length + 1);
+}
+
+function asymDrawF() {
+  const { p, modes } = as.res;
+  const lo = Math.max(as.na, as.ns);
+  const note = $("aLegend");
+  if (!(lo < as.nf)) { note.innerHTML = ""; return; }
+  const J = Math.min(asymRowsCount(), 10);
+  const top = Math.max(asymF(lo, 0, p), 1) * 1.05;
+  const bottom = -(J + 0.5) * Math.PI;
+  const P = new Plot($("aF"), 0.55, [lo, as.nf], [bottom, top], { l: 50, r: 14, t: 12, b: 34 });
+  P.frame("n_eff", "F");
+  P.hline(0, { color: css("--text"), width: 1.5 });
+  const xs = Array.from({ length: 401 }, (_, i) => lo + (as.nf - lo) * i / 400);
+  P.clipStart();
+  for (let j = 0; j < J; j++) P.line(xs, xs.map((x) => asymF(x, j, p)), { color: css(F_VARS[j % 5]), width: 2.2 });
+  P.clipEnd();
+  for (const m of modes) {
+    if (m.j >= J) continue;
+    P.dot(m.neff, 0, { color: css(F_VARS[m.j % 5]), r: m.j === as.j ? 6 : 4 });
+  }
+  note.innerHTML = Array.from({ length: J }, (_, j) => `<span><i style="background:var(${F_VARS[j % 5]})"></i>j = ${j}</span>`).join("")
+    + "<span><span class='dot fill'></span>корень n<sub>eff</sub></span>";
+}
+
+function asymDrawTable() {
+  const { modes, k0 } = as.res;
+  const lo = Math.max(as.na, as.ns);
+  const span = (a, b) => `<span>${a}</span><span>${b}</span>`;
+  const V = k0 * as.h * Math.sqrt(Math.max(0, as.nf ** 2 - as.ns ** 2));
+  $("aScore").innerHTML = [
+    span("Направляемых мод", String(modes.length)),
+    span("Диапазон n<sub>eff</sub>", lo < as.nf ? `${fmt(lo, 4)} … ${fmt(as.nf, 4)}` : "нет"),
+    span("V = k<sub>0</sub>h√(n<sub>f</sub>² − n<sub>s</sub>²)", fmt(V, 3)),
+    span("k<sub>0</sub>", `${fmt(k0, 4)} мкм⁻¹`),
+  ].join("");
+  const head = "<tr><th class='l'>j</th><th>n<sub>eff</sub></th><th>γ<sub>f</sub>, мкм⁻¹</th><th>δ<sub>a</sub></th><th>δ<sub>s</sub></th><th>Γ</th><th>h<sub>c</sub> TE, мкм</th><th>h<sub>c</sub> TM, мкм</th></tr>";
+  const rows = [];
+  for (let j = 0; j < asymRowsCount(); j++) {
+    const m = modes[j];
+    const hcTE = asymCutoffThickness(j, as.na, as.nf, as.ns, as.lam, "TE");
+    const hcTM = asymCutoffThickness(j, as.na, as.nf, as.ns, as.lam, "TM");
+    const cls = `pick${m && j === as.j ? " sel" : ""}`;
+    rows.push(`<tr class="${cls}" data-j="${m ? j : -1}"><td class="l">${j}</td>`
+      + (m ? `<td>${fmt(m.neff, 6)}</td><td>${fmt(m.gamma, 4)}</td><td>${fmt(m.deltaA, 4)}</td><td>${fmt(m.deltaS, 4)}</td><td>${fmt(asymConfinement(m), 4)}</td>`
+        : "<td colspan='5' class='l'>не направляется при этой толщине</td>")
+      + `<td>${fmt(hcTE, 4)}</td><td>${fmt(hcTM, 4)}</td></tr>`);
+  }
+  $("aTable").innerHTML = `<table>${head}${rows.join("")}</table>`;
+  for (const tr of $("aTable").querySelectorAll("tr.pick")) {
+    tr.addEventListener("click", () => {
+      const j = +tr.dataset.j;
+      if (j < 0) return;
+      as.j = j; $("aJ").value = String(j); asymDraw();
+    });
+  }
+}
+
+function asymDrawProfile() {
+  const m = as.res.modes[as.j];
+  const note = $("aProfNote");
+  if (!m) { note.textContent = "При этой толщине мод нет. Увеличьте h или контраст показателей."; return; }
+  const coef = asymCoefficients(m);
+  const z0 = -0.5 * as.h;
+  const z1 = 1.5 * as.h;
+  const zs = Array.from({ length: 601 }, (_, i) => z0 + (z1 - z0) * i / 600);
+  const raw = zs.map((z) => asymField(m, z, coef));
+  const top = Math.max(...raw.map(Math.abs));
+  const ys = raw.map((v) => v / top);
+  const P = new Plot($("aProf"), 0.45, [z0, z1], [-1.1, 1.1]);
+  P.frame("z, мкм", as.pol === "TE" ? "E_y / max" : "H_y / max");
+  P.rect(0, as.h, -1.1, 1.1, css("--panel"));
+  P.vline(0, { dash: [6, 4] });
+  P.vline(as.h, { dash: [6, 4] });
+  P.hline(0, { color: css(FRAME) });
+  P.clipStart();
+  P.line(zs, ys, { color: css(F_VARS[m.j % 5]), width: 2.6 });
+  P.clipEnd();
+  P.text(`n_s = ${fmt(as.ns, 3)}`, P.X(z0) + 6, P.Y(1.1) + 34);
+  P.text(`n_f = ${fmt(as.nf, 3)}`, P.X(as.h / 2), P.Y(1.1) + 34, { align: "center" });
+  P.text(`n_a = ${fmt(as.na, 3)}`, P.X(z1) - 6, P.Y(1.1) + 34, { align: "right" });
+  note.textContent = `${as.pol}${m.j}: n_eff = ${fmt(m.neff, 6)}, Γ = ${fmt(asymConfinement(m), 4)}. Глубина проникновения в подложку 1/δ_s = ${fmt(1 / m.deltaS, 3)} мкм, в покровный слой 1/δ_a = ${fmt(1 / m.deltaA, 3)} мкм`;
+}
+
+function asymDraw() {
+  asymDrawF();
+  asymDrawTable();
+  asymDrawProfile();
+}
+
+function asymUpdate() {
+  const na = readField("aNa");
+  const nf = readField("aNf");
+  const ns = readField("aNs");
+  const lam = readField("aL");
+  const h = readField("aH");
+  const err = $("aErr");
+  if (![na, nf, ns, lam, h].every(Number.isFinite)) { err.textContent = "Нужны положительные числа"; return; }
+  err.textContent = Math.max(na, ns) < nf ? "" : "Нужно n_f > max(n_a, n_s): иначе направляемых мод нет";
+  Object.assign(as, { na, nf, ns, lam, h });
+  asymCompute();
+  asymDraw();
+}
+
+for (const id of ["aNa", "aNf", "aNs", "aL", "aH"]) $(id).addEventListener("input", asymUpdate);
+$("aPol").addEventListener("input",() => { as.pol = $("aPol").value; asymUpdate(); });
+$("aJ").addEventListener("input",() => { as.j = +$("aJ").value; asymDraw(); });
+function asymPreset(na, nf, ns, lam, h) {
+  $("aNa").value = na; $("aNf").value = nf; $("aNs").value = ns; $("aL").value = lam; $("aH").value = h;
+  as.j = 0;
+  asymUpdate();
+}
+$("aP1").addEventListener("click", () => asymPreset("1,44", "1,45", "1,44", "1,55", "32"));
+$("aP2").addEventListener("click", () => asymPreset("1", "3,6", "3,4", "0,6328", "1,1"));
+drawers.asym = () => asymUpdate();
+
+onRedraw(() => drawers[currentTab]());
+showTab("round");
+</script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница softmax с температурой</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; min-width: 0; }
+canvas#logits { cursor: ns-resize; }
+.legend i.hard { background: none; border: 2px solid var(--text); height: 9px; width: 11px; border-radius: 1px; }
+.legend i.soft { background: var(--model-2); height: 9px; width: 11px; }
+.legend i.stud { background: var(--model); height: 9px; width: 11px; }
+.legend i.tick { background: var(--text-2); height: 2px; width: 14px; }
+button.on { border-color: var(--accent); color: var(--accent); }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btns button { flex: 1 1 auto; }
+#status { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница softmax с температурой</h1>
+  <p class="lead">Десять логитов из примера лектора: фотография Audi, пять машин и пять грибов. Логиты учителя v заданы, логиты ученика z начинаются с них</p>
+  <p class="lead">Перетащите столбец z вверх или вниз, поверните температуру T и посмотрите, как меняются распределение q = softmax(z/T), энтропия H(q) и градиент кросс-энтропии (q − p)/T для выбранной метки p</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="logits" width="640" height="330" aria-label="Логиты ученика z, столбцы перетаскиваются"></canvas>
+      <canvas id="dist" width="640" height="360" aria-label="Жёсткая метка, мягкая метка и ответ ученика по классам"></canvas>
+      <div class="legend">
+        <span><i class="hard"></i>жёсткая метка y (one-hot)</span>
+        <span><i class="soft"></i>мягкая метка p = softmax(v/T)</span>
+        <span><i class="stud"></i>ответ ученика q = softmax(z/T)</span>
+        <span><i class="tick"></i>логит учителя v</span>
+      </div>
+      <canvas id="entropy" width="640" height="300" aria-label="Энтропия ответа ученика в зависимости от температуры"></canvas>
+      <canvas id="grad" width="640" height="330" aria-label="Градиент кросс-энтропии по логитам"></canvas>
+    </div>
+    <div class="panel">
+      <label>Температура T = <b id="Tv"></b>
+        <input id="T" type="range" min="-1.30103" max="1.69897" step="any" value="0">
+      </label>
+      <div class="btns">
+        <button id="t1">T = 1</button>
+        <button id="t01">T = 0,1</button>
+        <button id="t20">T = 20</button>
+      </div>
+      <label>Жёсткая метка y (щелчок по столбцу распределения тоже её выбирает)
+        <select id="hard"></select>
+      </label>
+      <label>Градиент считается по метке
+        <select id="mode">
+          <option value="hard">жёсткой y</option>
+          <option value="soft">мягкой p</option>
+        </select>
+      </label>
+      <label class="row"><input id="logy" type="checkbox"> ось вероятностей в логарифме</label>
+      <div class="btns"><button id="reset">z := v</button></div>
+      <div class="score" id="score"></div>
+      <p class="note" id="status"></p>
+      <div id="honest"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const NAMES = DATA.audi.names, V = DATA.audi.z, N = V.length;
+const LOGIT_LO = -12, LOGIT_HI = 2;   // the range a logit bar can be dragged over
+const LOG_FLOOR = -4;                 // the logarithmic probability axis is cut at 1e-4
+const T_LO = -1.30103, T_HI = 1.69897; // log10 of 0.05 and 50
+const lc = $("logits"), lx = lc.getContext("2d"), dc = $("dist"), dx = dc.getContext("2d");
+const ec = $("entropy"), ex = ec.getContext("2d"), gc = $("grad"), gx = gc.getContext("2d");
+
+let z = V.slice(), lframe = null, eframe = null, dragging = -1;
+const Tval = () => 10 ** +$("T").value;
+const hardIdx = () => +$("hard").value;
+const onehot = (k) => V.map((_, i) => (i === k ? 1 : 0));
+const labelP = (T) => ($("mode").value === "soft" ? softmaxT(V, T) : onehot(hardIdx()));
+
+$("hard").innerHTML = NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+$("hard").value = String(DATA.audi.audi);
+
+// Class names under a canvas, turned so that "подберёзовик" fits ten columns.
+function classNames(ctx, f, { hot = -1 } = {}) {
+  ctx.save();
+  ctx.font = font(11); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  NAMES.forEach((n, i) => {
+    const x = (f.px(i) + f.px(i + 1)) / 2, y = f.mt + f.H + 10;
+    ctx.save();
+    ctx.translate(x + 3, y); ctx.rotate(-Math.PI / 4);
+    ctx.fillStyle = css(i === hot ? "--text" : "--text-2");
+    ctx.fillText(n, 0, 0);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+// A value label with a surface-coloured halo so it stays readable over neighbouring bars.
+function tag(ctx, text, x, y, base = "bottom") {
+  ctx.save();
+  ctx.font = font(10); ctx.textAlign = "center"; ctx.textBaseline = base;
+  ctx.lineWidth = 3; ctx.strokeStyle = css("--surface"); ctx.lineJoin = "round";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = css("--text"); ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function drawLogits() {
+  const ctx = lx;
+  ctx.clearRect(0, 0, lc.width, lc.height);
+  const f = lframe = frame(lc, [0, N], [LOGIT_LO, LOGIT_HI], { margin: [48, 28, 14, 84] });
+  const yt = []; for (let t = LOGIT_LO; t <= LOGIT_HI; t += 2) yt.push(t);
+  axes(ctx, f, { yticks: yt, ylabel: "логиты ученика z (тяните столбец)", yfmt: (t) => String(t) });
+  ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(f.ml, f.py(0)); ctx.lineTo(f.ml + f.W, f.py(0)); ctx.stroke();
+  z.forEach((zi, i) => {
+    const x0 = f.px(i) + 8, w = f.px(i + 1) - f.px(i) - 16;
+    ctx.fillStyle = css("--model");
+    ctx.globalAlpha = i === dragging ? 1 : 0.85;
+    ctx.fillRect(x0, Math.min(f.py(0), f.py(zi)), w, Math.abs(f.py(zi) - f.py(0)));
+    ctx.globalAlpha = 1;
+    // teacher's logit v_i: a tick across the column
+    polyline(ctx, [[x0 - 4, f.py(V[i])], [x0 + w + 4, f.py(V[i])]], css("--text-2"), 2);
+    tag(ctx, num(zi, 2), x0 + w / 2, zi >= 0 ? f.py(zi) - 3 : f.py(zi) + 14, zi >= 0 ? "bottom" : "bottom");
+  });
+  classNames(ctx, f);
+}
+
+function drawDist() {
+  const ctx = dx, T = Tval(), q = softmaxT(z, T), p = softmaxT(V, T), logy = $("logy").checked;
+  ctx.clearRect(0, 0, dc.width, dc.height);
+  const lo = logy ? LOG_FLOOR : 0, hi = logy ? 0 : 1;
+  const f = frame(dc, [0, N], [lo, hi], { margin: [52, 28, 14, 84] });
+  const yv = (v) => f.py(logy ? Math.max(LOG_FLOOR, Math.log10(Math.max(v, 1e-300))) : v);
+  axes(ctx, f, {
+    yticks: logy ? [-4, -3, -2, -1, 0] : [0, 0.25, 0.5, 0.75, 1],
+    yfmt: logy ? (t) => num(10 ** t) : (t) => toComma(t, null),
+    ylabel: logy ? "вероятность, лог. шкала" : "вероятность",
+  });
+  // the uniform limit 1/N
+  ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = css("--text-2"); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(f.ml, yv(1 / N)); ctx.lineTo(f.ml + f.W, yv(1 / N)); ctx.stroke(); ctx.restore();
+  ctx.save(); ctx.fillStyle = css("--text-2"); ctx.font = font(11); ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+  ctx.fillText(`1/N = ${num(1 / N)}`, f.ml + f.W - 4, yv(1 / N) - 3); ctx.restore();
+  const k = hardIdx();
+  for (let i = 0; i < N; i++) {
+    const gw = f.px(i + 1) - f.px(i), bw = gw * 0.27, x0 = f.px(i) + gw * 0.06, base = f.py(lo);
+    // hard label: only the chosen class is one-hot
+    if (i === k) {
+      ctx.strokeStyle = css("--text"); ctx.lineWidth = 2;
+      ctx.strokeRect(x0 + 1, yv(1) + 1, bw - 2, base - yv(1) - 1);
+    }
+    ctx.fillStyle = css("--model-2");
+    ctx.fillRect(x0 + bw, yv(p[i]), bw - 1, Math.max(1.5, base - yv(p[i])));
+    ctx.fillStyle = css("--model");
+    ctx.fillRect(x0 + 2 * bw, yv(q[i]), bw - 1, Math.max(1.5, base - yv(q[i])));
+    if (q[i] >= 0.02) tag(ctx, num(q[i], 2), x0 + 2.5 * bw, yv(q[i]) - 2);
+  }
+  classNames(ctx, f, { hot: k });
+}
+
+function drawEntropy() {
+  const ctx = ex, T = Tval();
+  ctx.clearRect(0, 0, ec.width, ec.height);
+  const lnN = Math.log(N);
+  const f = eframe = frame(ec, [T_LO, T_HI], [0, lnN * 1.12], { margin: [52, 28, 14, 46] });
+  const ticks = [0.05, 0.1, 0.5, 1, 5, 10, 50];
+  axes(ctx, f, {
+    xticks: ticks.map(Math.log10), yticks: [0, 0.5, 1, 1.5, 2],
+    xfmt: (t) => num(10 ** t, 2), yfmt: (t) => toComma(t, null),
+    xlabel: "температура T, лог. шкала", ylabel: "энтропия H(q), нат",
+  });
+  // ln N, the limit T -> infinity
+  polyline(ctx, [[f.ml, f.py(lnN)], [f.ml + f.W, f.py(lnN)]], css("--text-2"), 1.5, [6, 4]);
+  ctx.save(); ctx.fillStyle = css("--text-2"); ctx.font = font(11); ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+  ctx.fillText(`ln N = ${num(lnN)}: предел при T → ∞, все классы по 1/N`, f.ml + 6, f.py(lnN) - 3);
+  ctx.textAlign = "right"; ctx.fillText("H → 0 при T → 0: one-hot", f.ml + f.W - 6, f.py(0) - 6);
+  ctx.restore();
+  const pts = [];
+  for (let k = 0; k <= 240; k++) { const t = T_LO + ((T_HI - T_LO) * k) / 240; pts.push([f.px(t), f.py(entropy(softmaxT(z, 10 ** t)))]); }
+  polyline(ctx, pts, css("--text"), 2.5);
+  const t = Math.log10(T), H = entropy(softmaxT(z, T));
+  ctx.save(); ctx.strokeStyle = css("--mark"); ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(f.px(t), f.py(0)); ctx.lineTo(f.px(t), f.py(H)); ctx.stroke(); ctx.restore();
+  probeMark(ctx, f.px(t), f.py(H));
+}
+
+function drawGrad() {
+  const ctx = gx, T = Tval(), q = softmaxT(z, T), p = labelP(T), g = softmaxCeGrad(z, p, T);
+  ctx.clearRect(0, 0, gc.width, gc.height);
+  const m = Math.max(0.1, ...g.map(Math.abs)), top = Math.ceil(m * 10 * 1.1) / 10;
+  const f = frame(gc, [0, N], [-top, top], { margin: [52, 28, 14, 84] });
+  const step = top > 1.5 ? 1 : top > 0.6 ? 0.5 : top > 0.25 ? 0.2 : 0.1, yt = [];
+  for (let t = -Math.floor(top / step) * step; t <= top + 1e-9; t += step) yt.push(+t.toFixed(6));
+  axes(ctx, f, { yticks: yt, yfmt: (t) => num(t, 2), ylabel: `∂C/∂z = (q − p)/T, ${$("mode").value === "soft" ? "метка мягкая" : "метка жёсткая: " + NAMES[hardIdx()]}` });
+  ctx.strokeStyle = css("--text"); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(f.ml, f.py(0)); ctx.lineTo(f.ml + f.W, f.py(0)); ctx.stroke();
+  g.forEach((gi, i) => {
+    const x0 = f.px(i) + 8, w = f.px(i + 1) - f.px(i) - 16;
+    ctx.fillStyle = css("--text-2");
+    ctx.fillRect(x0, Math.min(f.py(0), f.py(gi)), w, Math.max(1.5, Math.abs(f.py(gi) - f.py(0))));
+    tag(ctx, num(gi, 2), x0 + w / 2, gi >= 0 ? f.py(gi) - 3 : f.py(gi) + 14);
+  });
+  classNames(ctx, f, { hot: $("mode").value === "soft" ? -1 : hardIdx() });
+}
+
+function score() {
+  const T = Tval(), q = softmaxT(z, T), p = labelP(T), g = softmaxCeGrad(z, p, T), lnN = Math.log(N);
+  const H = entropy(q), top = q.indexOf(Math.max(...q));
+  const mean = q.reduce((s, qi, i) => s + qi * z[i], 0), varq = q.reduce((s, qi, i) => s + qi * (z[i] - mean) ** 2, 0);
+  const mush = q.slice(5).reduce((s, v) => s + v, 0);
+  $("score").innerHTML =
+    `<span>H(q), нат</span><span>${num(H)}</span>` +
+    `<span>H / ln N</span><span>${num(H / lnN)}</span>` +
+    `<span>max q</span><span>${NAMES[top]} ${num(q[top], 3)}</span>` +
+    `<span>Пять грибов</span><span>${num(mush, 3)}</span>` +
+    `<span>Σ q</span><span>${num(q.reduce((s, v) => s + v, 0), 6)}</span>` +
+    `<span>‖∂C/∂z‖</span><span>${num(Math.hypot(...g))}</span>` +
+    `<span>Σ ∂C/∂z</span><span>${num(Math.abs(g.reduce((s, v) => s + v, 0)) < 1e-12 ? 0 : g.reduce((s, v) => s + v, 0))}</span>` +
+    `<span>Var_q(z)</span><span>${num(varq)}</span>` +
+    `<span>dH/dT = Var/T³</span><span>${num(varq / T ** 3)}</span>`;
+  const dz = z.some((zi, i) => Math.abs(zi - V[i]) > 1e-12);
+  $("status").textContent = $("mode").value === "soft"
+    ? (dz ? "Метка мягкая: градиент равен нулю только там, где q = p, то есть при z = v (с точностью до общего сдвига)" : "z = v и метка мягкая: ученик уже совпадает с учителем, градиент нулевой при любом T")
+    : "Метка жёсткая: пока q не стала one-hot, градиент не нулевой; его компонента у класса метки отрицательна (логит надо поднять), у остальных положительна (опустить)";
+}
+
+function draw() {
+  $("Tv").textContent = num(Tval(), 3);
+  drawLogits(); drawDist(); drawEntropy(); drawGrad(); score();
+}
+
+// ---------- controls ----------
+
+$("T").addEventListener("input", draw);
+$("hard").addEventListener("input", draw);
+$("mode").addEventListener("input", draw);
+$("logy").addEventListener("input", draw);
+const setT = (t) => { $("T").value = String(Math.log10(t)); draw(); };
+$("t1").addEventListener("click", () => setT(1));
+$("t01").addEventListener("click", () => setT(0.1));
+$("t20").addEventListener("click", () => setT(20));
+$("reset").addEventListener("click", () => { z = V.slice(); draw(); });
+
+function dragTo(e) {
+  const [, py] = canvasXY(lc, e);
+  z[dragging] = Math.max(LOGIT_LO, Math.min(LOGIT_HI, lframe.dy(py)));
+  draw();
+}
+lc.addEventListener("pointerdown", (e) => {
+  const [px] = canvasXY(lc, e);
+  const i = Math.floor(((px - lframe.ml) / lframe.W) * N);
+  if (i < 0 || i >= N) return;
+  dragging = i; lc.setPointerCapture(e.pointerId); dragTo(e);
+});
+lc.addEventListener("pointermove", (e) => { if (dragging >= 0) dragTo(e); });
+const release = () => { dragging = -1; draw(); };
+lc.addEventListener("pointerup", release);
+lc.addEventListener("pointercancel", release);
+
+dc.addEventListener("pointerdown", (e) => {
+  const [px] = canvasXY(dc, e);
+  const f = frame(dc, [0, N], [0, 1], { margin: [52, 28, 14, 84] });
+  const i = Math.floor(((px - f.ml) / f.W) * N);
+  if (i >= 0 && i < N) { $("hard").value = String(i); draw(); }
+});
+ec.addEventListener("pointerdown", (e) => {
+  const [px] = canvasXY(ec, e);
+  if (px < eframe.ml || px > eframe.ml + eframe.W) return;
+  const move = (ev) => { $("T").value = String(Math.max(T_LO, Math.min(T_HI, eframe.dx(canvasXY(ec, ev)[0])))); draw(); };
+  ec.setPointerCapture(e.pointerId); move(e);
+  ec.onpointermove = move; ec.onpointerup = () => { ec.onpointermove = null; };
+});
+
+$("honest").innerHTML = [
+  "Числа считаются по формулам, которые верны тождественно: softmax, энтропия, градиент (q − p)/T и dH/dT = Var_q(z)/T³. Это разложение, а не замер: провалить его нельзя",
+  "Функции сверены в mlcore.test.mjs с figures/08/softmax_common.py и с центральными разностями",
+  "Логиты учителя v — ln p от долей из заметки; доли BMW, Mercedes и грибов предположены в заметке, из лекции известны не все",
+  "На логарифмической оси вероятности ниже 10⁻⁴ обрезаны по нижнему краю",
+].map((t) => `<p class="note">${t}</p>`).join("");
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

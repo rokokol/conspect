@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница характеристических чисел ядра</title>
+<style>
+/*COMMON_CSS*/
+/*KERNEL_CSS*/
+.mtab td { white-space: nowrap; }
+.mtab th { vertical-align: bottom; }
+.ftext { font-size: 14px; }
+.rng { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница характеристических чисел ядра</h1>
+  <p class="lead">Однородное уравнение φ(x) − λ∫K(x,t)φ(t)dt = 0 с вырожденным ядром K = Σ α<sub>k</sub>(x)β<sub>k</sub>(t) имеет ненулевое решение только при λ, где обращается в нуль многочлен Δ(λ) = det(I − λA). Введи ядро и найди эти числа и собственные функции</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Готовый пример</h2>
+        <select id="preset" aria-label="Готовый пример"></select>
+      </div>
+      <div class="sec">
+        <h2>Отрезок и ядро</h2>
+        <div id="kernel"></div>
+        <p class="note">Формулы: числа, x и t, pi и e, знаки + − * / ^, скобки и функции sin cos tan exp log ln sqrt abs, а также sh ch tg arcsin. Умножение пишется знаком *</p>
+        <p class="err" id="err" role="status"></p>
+      </div>
+      <div class="sec">
+        <h2>Диапазон графика Δ(λ)</h2>
+        <div class="rng">
+          <label class="fld">от<input id="lmin" value="-5" inputmode="decimal"></label>
+          <label class="fld">до<input id="lmax" value="5" inputmode="decimal"></label>
+        </div>
+        <button id="auto" type="button">Подобрать по корням</button>
+      </div>
+      <div class="sec">
+        <h2>Собственная функция</h2>
+        <label>Вещественное характеристическое число
+          <select id="sel"></select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Многочлен Δ(λ)</h2>
+        <div class="formula ftext" id="delta"></div>
+        <div id="matrix"></div>
+        <p class="note">Корни Δ это числа λ = 1/μ для ненулевых собственных чисел μ матрицы A = (a<sub>km</sub>), a<sub>km</sub> = ∫α<sub>k</sub>β<sub>m</sub>dt. Нулевые μ корней не дают</p>
+      </section>
+      <section>
+        <h2>График Δ(λ) на вещественной оси</h2>
+        <canvas id="dchart" class="wide" role="img" aria-label="График многочлена Δ(λ), отмечены вещественные корни"></canvas>
+        <p class="note" id="dnote"></p>
+      </section>
+      <section>
+        <h2>Характеристические числа</h2>
+        <div id="roots"></div>
+        <p class="note" id="rootsNote"></p>
+      </section>
+      <section id="efSection">
+        <h2>Собственная функция</h2>
+        <canvas id="ef" class="wide" role="img" aria-label="График собственной функции"></canvas>
+        <div class="legend" id="efLegend"></div>
+        <p class="note" id="efNote"></p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*LACORE*/
+/*KERNEL_JS*/
+const editor = kernelEditor($("kernel"), () => { rangeAuto = true; schedule(); });
+let timer = 0, rangeAuto = true, state = null;
+function schedule() { clearTimeout(timer); timer = setTimeout(update, 120); }
+
+const SAMPLES = 400, EF_POINTS = 200;
+const SERIES = ["--c1", "--c0", "--c2", "--c3"];
+const cplx = (z) => (z.im === 0 ? fmt(z.re)
+  : Math.abs(z.re) <= 1e-9 * Math.abs(z.im) ? `${z.im < 0 ? "−" : ""}${fmt(Math.abs(z.im))}i`
+    : `${fmt(z.re)} ${z.im < 0 ? "−" : "+"} ${fmt(Math.abs(z.im))}i`);
+
+function polyText(d) {
+  const top = Math.max(...Array.from(d, Math.abs));
+  let s = "1";
+  for (let k = 1; k < d.length; k++) {
+    if (Math.abs(d[k]) <= 1e-10 * Math.max(top, 1)) continue;
+    const pw = k === 1 ? "λ" : `λ<sup>${k}</sup>`;
+    s += ` ${d[k] < 0 ? "−" : "+"} ${fmt(Math.abs(d[k]))}${pw}`;
+  }
+  return s;
+}
+
+function matrixTable(A, n) {
+  const head = `<tr><th>a<sub>km</sub></th>${Array.from({ length: n }, (_, m) => `<th>m = ${m + 1}</th>`).join("")}</tr>`;
+  const body = Array.from({ length: n }, (_, k) => `<tr><td>k = ${k + 1}</td>${Array.from({ length: n }, (_, m) => `<td>${sci(Math.abs(A[k * n + m]) < 1e-13 ? 0 : A[k * n + m])}</td>`).join("")}</tr>`).join("");
+  return `<div style="overflow-x:auto"><table class="mtab">${head}${body}</table></div>`;
+}
+
+function autoRange(groups) {
+  const big = Math.max(0, ...groups.map((g) => Math.hypot(g.lambda.re, g.lambda.im)));
+  const r = big > 0 ? 1.5 * big : 5;
+  return [-r, r];
+}
+
+function setRange([lo, hi]) { $("lmin").value = String(+lo.toPrecision(4)); $("lmax").value = String(+hi.toPrecision(4)); }
+
+function update() {
+  let prob, data;
+  try {
+    prob = readKernelProblem(editor, null);
+    data = kernelData(prob);
+    clearError($("err"), editor);
+  } catch (e) {
+    showError($("err"), editor, e);
+    return;
+  }
+  const n = prob.n;
+  const d = deltaCoefficients(data.A, n);
+  const groups = characteristicNumbers(data.A, n, data.scale);
+  $("delta").innerHTML = `Δ(λ) = det(I − λA) = ${polyText(d)}`;
+  $("matrix").innerHTML = matrixTable(data.A, n);
+
+  if (rangeAuto) setRange(autoRange(groups));
+  drawDelta(data, n, groups);
+
+  // table of the numbers
+  if (!groups.length) {
+    $("roots").innerHTML = "";
+    $("rootsNote").textContent = "Характеристических чисел нет: все ненулевые μ отсутствуют, Δ(λ) ≡ 1, и однородное уравнение при любом λ имеет лишь нулевое решение";
+  } else {
+    const rows = groups.map((g) => `<tr><td>${cplx(g.lambda)}</td><td>${cplx(g.sigma)}</td><td>${g.alg}</td><td>${g.rank}</td></tr>`).join("");
+    $("roots").innerHTML = `<div style="overflow-x:auto"><table class="mtab"><tr><th>λ</th><th>σ = 1/λ</th><th>Кратность корня Δ</th><th>Ранг: число собственных функций</th></tr>${rows}</table></div>`;
+    const real = groups.filter((g) => g.real).length;
+    $("rootsNote").textContent = real === 0
+      ? "Вещественных характеристических чисел нет: Δ(0) = 1 и Δ не обращается в нуль на вещественной оси, а числа комплексные"
+      : `Различных чисел ${groups.length}, из них вещественных ${real}. Кратность корня Δ не меньше ранга`;
+  }
+
+  // eigenfunctions
+  const reals = groups.filter((g) => g.real);
+  const prev = $("sel").value;
+  $("sel").innerHTML = reals.map((g, i) => `<option value="${i}">λ = ${cplx(g.lambda)}</option>`).join("");
+  if (prev && +prev < reals.length) $("sel").value = prev;
+  $("sel").disabled = reals.length === 0;
+  state = { prob, data, reals };
+  drawEigen();
+}
+
+function drawDelta(data, n, groups) {
+  let lo = Number($("lmin").value.replace(",", ".")), hi = Number($("lmax").value.replace(",", "."));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !(lo < hi)) { $("dnote").textContent = "Диапазон задан неверно: нужны числа от < до"; return; }
+  const xs = Array.from({ length: SAMPLES }, (_, i) => lo + (hi - lo) * i / (SAMPLES - 1));
+  const ys = xs.map((x) => delta(data.A, n, x));
+  const clipped = ys.map((v) => Math.max(-6, Math.min(10, v)));
+  const roots = groups.filter((g) => g.real && g.lambda.re >= lo && g.lambda.re <= hi);
+  plotLines($("dchart"), {
+    series: [{ xs, ys, color: css("--c1"), width: 2.2 }],
+    xlim: [lo, hi], ylim: yRange([clipped], [0, 1]),
+    points: roots.map((g) => ({ x: g.lambda.re, y: 0, color: css("--mark"), filled: true })),
+  });
+  const outside = groups.filter((g) => g.real && (g.lambda.re < lo || g.lambda.re > hi)).length;
+  $("dnote").textContent = `Точки на оси это вещественные корни${outside ? `, ещё ${outside} вне диапазона` : ""}. Значения Δ вне окна от −6 до 10 обрезаются`;
+}
+
+function drawEigen() {
+  const { prob, data, reals } = state;
+  $("efSection").hidden = false;
+  if (!reals.length) {
+    $("efSection").hidden = true;
+    return;
+  }
+  const g = reals[+$("sel").value || 0];
+  const Cs = eigenCoefficients(data.A, prob.n, g.lambda.re);
+  const xs = Array.from({ length: EF_POINTS }, (_, i) => prob.lo + (i + 0.5) / EF_POINTS * (prob.hi - prob.lo));
+  const series = Cs.map((C, i) => ({ xs, ys: eigenFunctionValues(prob, C, xs), color: css(SERIES[i % SERIES.length]), width: 2.2 }));
+  plotLines($("ef"), { series, xlim: [prob.lo, prob.hi], ylim: yRange(series.map((s) => s.ys), [0, 1, -1]) });
+  $("efLegend").innerHTML = series.map((s, i) => `<span><i style="background:var(${SERIES[i % SERIES.length]})"></i>φ<sub>${i + 1}</sub>(x)</span>`).join("");
+  let worst = 0;
+  for (const C of Cs) {
+    for (let s = 1; s < 10; s++) {
+      const x = prob.lo + (prob.hi - prob.lo) * s / 10;
+      try { worst = Math.max(worst, Math.abs(residualAt(prob, C, g.lambda.re, x).value)); } catch (e) { worst = NaN; }
+    }
+  }
+  $("efNote").textContent = `λ = ${cplx(g.lambda)}, σ = ${cplx(g.sigma)}, собственных функций ${Cs.length}, каждая нормирована на наибольшее значение 1. Невязка φ − λ∫Kφ при подстановке в однородное уравнение не больше ${sci(worst)}`;
+}
+
+const PRESETS_NUM = presetsFor("numbers");
+PRESETS_NUM.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; $("preset").appendChild(o); });
+function applyPreset(i) {
+  editor.setProblem(PRESETS_NUM[i]);
+  rangeAuto = true;
+  update();
+}
+$("preset").addEventListener("input", () => applyPreset(+$("preset").value));
+["lmin", "lmax"].forEach((id) => $(id).addEventListener("input", () => { rangeAuto = false; if (state) { const { prob, data } = state; drawDelta(data, prob.n, characteristicNumbers(data.A, prob.n, data.scale)); } }));
+$("auto").addEventListener("click", () => { rangeAuto = true; update(); });
+$("sel").addEventListener("input", drawEigen);
+window.addEventListener("resize", update);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+applyPreset(0);
+</script>
+</body>
+</html>

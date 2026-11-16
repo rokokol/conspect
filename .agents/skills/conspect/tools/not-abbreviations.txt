@@ -1,0 +1,79 @@
+# Токены, которые abbrev-undecoded принимает за аббревиатуру, хотя это не она.
+# Запись — регулярное выражение на весь токен, записи разделены пробелами, # — комментарий.
+# Сюда идёт класс, а не одна находка: одиночный ложный случай дешевле принять в базу.
+# Классы, которые решает форма токена или его место, тут не нужны: токены с цифрой,
+# римские числа, код, формулы, ячейки-ключи таблиц и русские слова капсом lint.py
+# отсеивает сам (SKILL.md → ### Тон и пунктуация, сноска [^abbr-skip])
+
+# единицы измерения
+[КМГТП]Б [KMGTP]B [KMGTPE]?FLOPS [МГ]Н ГТ GT
+
+# химические формулы без цифр
+CO OH
+
+# русские служебные слова и числительные капсом — акцент; короче порога сверки с волтом.
+# ПО и ТО сюда не входят: это аббревиатуры
+НЕ НИ НО НУ ДА ДО ОТ ЗА НА ИЗ ВО КО ЖЕ ЛИ БЫ УЖ ИЛИ ЧТО КАК ВОТ ТАК ГДЕ КТО ВСЕ ВСЁ ЕЩЁ
+ДВА ДВЕ ТРИ
+
+# сокращения, ставшие словами: фразы для расшифровки у них нет
+OK ID TUN
+
+# коды стран и названия государств
+RU US UK DE SE CH JP EU ANZ РФ США СССР
+
+# компании, марки, продукты, тикеры, форматы и лицензии: имя, а не сокращение
+IBM AMD NVIDIA BMW DEC HPE EPYC GIGABYTE LEGO КАМАЗ VIA VIAVI IOS ZIP MIT
+VK VS СДЭК МТС JLCPCB LCSC RTX UNIX KHTML JAX DALL-E WARP XHTTP BOOTSEL
+USDT TRX XMR BTC ETH GTK RISC-V МЦСТ-R BIN BMP
+
+# имена собственные капсом: суперкомпьютеры, симуляторы, модели, индексы, проекты
+LUMI JUPITER DOOMFLY VODKA XLS-R
+
+# вузы
+КФУ МГУ МФТИ МИФИ МГТУ ТПУ
+
+# имена файлов-соглашений
+README LICENSE CHANGELOG
+
+# ключевые слова SQL
+SELECT FROM WHERE ORDER GROUP BY HAVING LIMIT OFFSET JOIN UNION ALL ANY DISTINCT FILTER
+INSERT UPDATE DELETE MERGE TRUNCATE COPY CREATE ALTER DROP TABLE INDEX COLUMN TYPE USING
+PRIMARY FOREIGN KEY REFERENCES UNIQUE CHECK DEFAULT NULL NOT IN ON CONFLICT FOR SET ROLE
+CONCURRENTLY ANALYZE VACUUM PRAGMA STATEMENT ROW MIXED RANGE LIST HASH REPEATABLE READ
+COMMITTED SERIALIZABLE LOGIN SUPERUSER CREATEDB CREATEROLE INHERIT REPLICATION CONNECTION
+
+# методы HTTP и слова RFC 2119
+GET POST PUT PATCH HEAD OPTIONS MUST SHOULD MAY
+
+# логические операции, уровни и состояния (ON — в SQL выше)
+AND OR NOR NAND XOR XNOR HIGH LOW OFF
+
+# части номера версии semver (PATCH — в методах HTTP выше)
+MAJOR MINOR
+
+# регистры x86: общего назначения, сегментные, векторные, флаги
+[RE]?[A-D]X [A-D][HL] [RE]?(?:SI|DI|SP|BP|IP) (?:SI|DI|SP|BP)L [CDEFGS]S [XYZ]?MM EFLAGS EFER
+R(?:[89]|1[0-5])[BWD]? ST
+CF PF ZF SF TF OF IOPL VIF
+
+# команды x86 и x87, которые проза называет голыми
+MOV MOVS CMP CMPS SCAS LODS STOS INS OUTS LES LDS PUSH POP INC XCHG XADD BSWAP CMPXCHG
+SAL SAR SHL SHR SHLD SHRD ROL RCL RCR SUB SBB MUL IMUL IDIV STI BOUND WRMSR CLFLUSH LOCK
+ADC ADDPD PHADDW
+
+# команды других систем команд и протоколов: RISC, SCSI (READ — в SQL выше)
+LOAD STORE WRITE
+F(?:I?(?:ADD|SUB|MUL|DIV)P?|XCH|N?STSW|XSAVE|XRSTOR)
+
+# сигналы POSIX
+SIG[A-Z]+
+
+# клавиши
+TAB SHIFT CTRL ALT SUPER ESC ENTER
+
+# подписи питания и тактов на схемах
+GND VCC VDD VSS VBUS CLK
+
+# подписи линий передачи и приёма на схемах и в распиновках: TX, RX, у USB SuperSpeed — SSTX, SSRX
+(?:SS)?[TR]X

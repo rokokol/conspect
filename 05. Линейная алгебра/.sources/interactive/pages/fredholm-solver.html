@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница уравнения Фредгольма</title>
+<style>
+/*COMMON_CSS*/
+/*KERNEL_CSS*/
+.mtab td, .mtab th { white-space: nowrap; }
+.ftext { font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница уравнения Фредгольма с вырожденным ядром</h1>
+  <p class="lead">Уравнение φ(x) − λ∫K(x,t)φ(t)dt = f(x) с ядром K = Σ α<sub>k</sub>(x)β<sub>k</sub>(t) сводится к линейной системе для чисел C<sub>k</sub>. Введи ядро и правую часть, и страница решит систему, построит φ и проверит решение подстановкой в исходное уравнение</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Готовая задача</h2>
+        <select id="preset" aria-label="Готовая задача"></select>
+      </div>
+      <div class="sec">
+        <h2>Отрезок и ядро</h2>
+        <div id="kernel"></div>
+      </div>
+      <div class="sec">
+        <h2>Параметр и правая часть</h2>
+        <label class="fld">λ<input id="lam" value="0.2" inputmode="decimal"></label>
+        <label class="fld">f(x)<input id="fx" value="x"></label>
+        <p class="note">Формулы: числа, x и t, pi и e, знаки + − * / ^, скобки и функции sin cos tan exp log ln sqrt abs, а также sh ch tg arcsin. Умножение пишется знаком *</p>
+        <p class="err" id="err" role="status"></p>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Система для C<sub>k</sub></h2>
+        <p class="warn" id="warn" role="status"></p>
+        <div id="system"></div>
+        <div class="score" id="numbers"></div>
+        <p class="note">Система C<sub>m</sub> − λΣ<sub>k</sub> a<sub>km</sub>C<sub>k</sub> = f<sub>m</sub> записывается как (I − λA<sup>T</sup>)C = f</p>
+      </section>
+      <section id="solSection">
+        <h2>Решение</h2>
+        <div class="formula ftext" id="formula"></div>
+        <canvas id="phi" class="wide" role="img" aria-label="График решения φ(x)"></canvas>
+        <div class="legend"><span><i style="background:var(--c1)"></i>φ(x)</span><span><i style="background:var(--c0)"></i>f(x)</span></div>
+      </section>
+      <section id="resSection">
+        <h2>Проверка подстановкой</h2>
+        <canvas id="resid" class="wide" role="img" aria-label="График невязки"></canvas>
+        <p class="note" id="residNote"></p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*LACORE*/
+/*KERNEL_JS*/
+const editor = kernelEditor($("kernel"), schedule);
+let timer = 0;
+function schedule() { clearTimeout(timer); timer = setTimeout(update, 120); }
+
+const SAMPLES = 160, RESID_POINTS = 60;
+
+function matrixTable(A, n, fv) {
+  const head = `<tr><th>a<sub>km</sub></th>${Array.from({ length: n }, (_, m) => `<th>m = ${m + 1}</th>`).join("")}<th>f<sub>k</sub></th></tr>`;
+  const body = Array.from({ length: n }, (_, k) => `<tr><td>k = ${k + 1}</td>${Array.from({ length: n }, (_, m) => `<td>${fmt(A[k * n + m])}</td>`).join("")}<td>${fmt(fv[k])}</td></tr>`).join("");
+  return `<div style="overflow-x:auto"><table class="mtab">${head}${body}</table></div>`;
+}
+
+function update() {
+  let prob, lam, data;
+  try {
+    prob = readKernelProblem(editor, "fx");
+    lam = constant("lam", "λ");
+    data = kernelData(prob);
+    clearError($("err"), editor);
+  } catch (e) {
+    showError($("err"), editor, e);
+    return;
+  }
+  $("warn").textContent = "";
+  const n = prob.n;
+  const s = solveFredholm(data.A, data.fv, n, lam);
+  $("system").innerHTML = matrixTable(data.A, n, data.fv);
+  $("numbers").innerHTML = [
+    ["Δ(λ) = det(I − λAᵀ)", sci(s.delta)],
+    ["Число обусловленности системы", fmt(s.cond)],
+    ["Оценка ошибки квадратуры", data.ok ? sci(data.err) : `${sci(data.err)}, точность 10⁻¹² не достигнута`],
+  ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join("");
+  if (s.singular) {
+    $("solSection").hidden = true; $("resSection").hidden = true;
+    $("warn").textContent = `λ = ${fmt(lam)} близко к характеристическому числу: Δ(λ) ≈ 0, система вырождена. Решения при такой λ нет или их бесконечно много, по теоремам Фредгольма это зависит от правой части f: подробнее в заметке "Теоремы Фредгольма"`;
+    return;
+  }
+  if (s.cond > 1e6) $("warn").textContent = `Система плохо обусловлена (${fmt(s.cond)}): λ рядом с характеристическим числом, решение чувствительно к ошибкам`;
+  $("solSection").hidden = false; $("resSection").hidden = false;
+  const alphas = editor.rowsText().map((r) => r.alpha);
+  $("formula").innerHTML = `φ(x) = f(x) + λΣC<sub>k</sub>α<sub>k</sub>(x) = ${sumOfTerms(`(${esc($("fx").value)})`, Array.from(s.C, (c) => lam * c), alphas)}<br>C = (${Array.from(s.C, fmt).join("; ")}), λ = ${fmt(lam)}`;
+
+  const xs = Array.from({ length: SAMPLES }, (_, i) => prob.lo + (i + 0.5) / SAMPLES * (prob.hi - prob.lo));
+  const phi = xs.map((x) => solutionAt(prob, s.C, lam, x)), fvals = xs.map((x) => prob.f(x));
+  plotLines($("phi"), {
+    series: [{ xs, ys: fvals, color: css("--c0"), width: 1.5, dash: [5, 4] }, { xs, ys: phi, color: css("--c1"), width: 2.4 }],
+    xlim: [prob.lo, prob.hi], ylim: yRange([phi, fvals]),
+  });
+  const rx = Array.from({ length: RESID_POINTS }, (_, i) => prob.lo + (i + 0.5) / RESID_POINTS * (prob.hi - prob.lo));
+  let worst = 0, quad = 0;
+  const res = rx.map((x) => {
+    try { const r = residualAt(prob, s.C, lam, x); worst = Math.max(worst, Math.abs(r.value)); quad = Math.max(quad, r.err); return r.value; } catch (e) { return NaN; }
+  });
+  plotLines($("resid"), { series: [{ xs: rx, ys: res, color: css("--c1"), width: 1.8 }], xlim: [prob.lo, prob.hi], ylim: yRange([res], [0]) });
+  const scale = Math.max(1, ...phi.filter(Number.isFinite).map(Math.abs));
+  $("residNote").textContent = `Невязка φ(x) − λ∫K(x,t)φ(t)dt − f(x): наибольшая по модулю ${sci(worst)} при размахе φ порядка ${fmt(scale)}, оценка ошибки её квадратуры ${sci(quad)}. Интеграл здесь считается по всему ядру, без сведения к системе`;
+}
+
+const PRESETS_SOLVE = presetsFor("solve");
+PRESETS_SOLVE.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; $("preset").appendChild(o); });
+function applyPreset(i) {
+  const p = PRESETS_SOLVE[i];
+  editor.setProblem(p);
+  $("lam").value = p.lambda; $("fx").value = p.f;
+  update();
+}
+$("preset").addEventListener("input", () => applyPreset(+$("preset").value));
+["lam", "fx"].forEach((id) => $(id).addEventListener("input", schedule));
+window.addEventListener("resize", update);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+applyPreset(0);
+</script>
+</body>
+</html>

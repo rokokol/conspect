@@ -1,0 +1,14 @@
+# Obsidian
+.obsidian/plugins/iconic/data.json.backup*
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.trash/
+
+# медиа и книги: вне git, живут на диске волта
+00. Вложения/
+Книги/
+
+# инструменты скиллов
+__pycache__/
+.pytest_cache/
+.agents/skills/conspect/tools/baseline.json

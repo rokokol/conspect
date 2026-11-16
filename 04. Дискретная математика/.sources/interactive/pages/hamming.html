@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница кода Хэмминга</title>
+<style>
+/*COMMON_CSS*/
+.scroll { overflow-x: auto; }
+table.cells { width: auto; min-width: 100%; }
+table.cells td, table.cells th { text-align: center; padding: 3px 2px; white-space: nowrap; }
+table.cells th { text-align: left; padding-right: 8px; }
+table.cells button.bit { min-width: 1.9em; padding: 2px 4px; }
+table.cells td.check { background: var(--panel); }
+table.cells td.err { outline: 2px solid var(--ddlc-series-2); outline-offset: -2px; }
+table.cells td.fix { outline: 2px solid var(--accent); outline-offset: -2px; }
+button.bit.flip { background: var(--ddlc-series-2); color: var(--surface); border-color: var(--ddlc-series-2); }
+button.bit.plain { cursor: default; background: transparent; border-color: transparent; }
+.ctl2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница кода Хэмминга</h1>
+  <p class="lead">Выбери порядок n и информационные разряды: проверочные на позициях 1, 2, 4, 8 достроятся сами. Затем исказить любые разряды принятого слова: получатель считает синдром, по нему находит позицию и меняет её. Одна ошибка исправляется всегда, две уже нет</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Код</h2>
+        <label>Порядок n
+          <select id="n"></select>
+        </label>
+        <div id="params"></div>
+        <button id="reset" type="button">Убрать ошибки</button>
+        <button id="zero" type="button">Обнулить данные</button>
+        <p class="note">Щелчок по информационному разряду в строке "передано" меняет его. Щелчок по разряду в строке "принято" вносит или снимает ошибку</p>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Слово и ошибки</h2>
+        <div class="scroll" id="words"></div>
+      </section>
+      <section>
+        <h2>Синдром</h2>
+        <div id="syndrome"></div>
+      </section>
+      <section>
+        <h2>Исправление</h2>
+        <div id="fix"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+let n = 7;
+let data = [];
+let errors = new Set();
+
+function received(sent) {
+  return sent.map((b, i) => (errors.has(i + 1) ? b ^ 1 : b));
+}
+
+function render() {
+  const k = hammingK(n), free = hammingFreePositions(n), sets = hammingSets(n);
+  const sent = hammingEncode(n, data);
+  const got = received(sent);
+  const r = hammingCorrect(n, got);
+  const isCheck = (j) => (j & (j - 1)) === 0;
+
+  $("params").innerHTML = `<p class="note">k = 1 + ⌊log₂ ${n}⌋ = ${k} проверок, информационных разрядов n − k = ${n - k}, слов в коде 2<sup>${n - k}</sup> = ${2 ** (n - k)}</p>`;
+
+  const cols = Array.from({ length: n }, (_, i) => i + 1);
+  const row = (title, cell) => `<tr><th>${title}</th>${cols.map(cell).join("")}</tr>`;
+  const fixedPos = r.number >= 1 && !r.outside ? r.number : 0;
+  $("words").innerHTML = `<table class="cells compact">
+    ${row("Позиция j", (j) => `<td class="${isCheck(j) ? "check" : ""}">${j}</td>`)}
+    ${row("Двоично", (j) => `<td>${j.toString(2).padStart(k, "0")}</td>`)}
+    ${row("Передано α", (j) => isCheck(j)
+      ? `<td class="check"><button type="button" class="bit plain" disabled>${sent[j - 1]}</button></td>`
+      : `<td><button type="button" class="bit${sent[j - 1] ? " one" : ""}" id="d${j}" aria-label="Данные, позиция ${j}, значение ${sent[j - 1]}, переключить">${sent[j - 1]}</button></td>`)}
+    ${row("Принято β", (j) => `<td class="${errors.has(j) ? "err" : ""}"><button type="button" class="bit${errors.has(j) ? " flip" : got[j - 1] ? " one" : ""}" id="r${j}" aria-label="Принято, позиция ${j}, значение ${got[j - 1]}, ${errors.has(j) ? "снять ошибку" : "исказить"}">${got[j - 1]}</button></td>`)}
+    ${row("Исправлено", (j) => `<td class="${j === fixedPos ? "fix" : ""}">${r.word[j - 1]}</td>`)}
+  </table>
+  <p class="note">Фоном закрашены проверочные позиции, степени двойки. Красная рамка: искажённый разряд. Рамка цвета выбора: позиция, которую поменяет получатель</p>`;
+  free.forEach((j) => $("d" + j).addEventListener("click", () => { data[free.indexOf(j)] ^= 1; render(); }));
+  cols.forEach((j) => $("r" + j).addEventListener("click", () => { errors.has(j) ? errors.delete(j) : errors.add(j); render(); }));
+
+  const rows = sets.map((set, i) => `<tr><td>${i}</td><td>${set.join(", ")}</td><td>${set.map((j) => got[j - 1]).join(" + ")}</td><td><b>${r.delta[i]}</b></td></tr>`).join("");
+  $("syndrome").innerHTML = `<table class="compact"><tr><th>i</th><th>Множество D<sub>i</sub></th><th>β на D<sub>i</sub></th><th>δ<sub>i</sub></th></tr>${rows}</table>
+    <div class="formula">(δ${sub(k - 1)}…δ₀)₂ = ${[...r.delta].reverse().join("")}₂ = <b>${r.number}</b></div>`;
+
+  const sentText = sent.join(""), fixedText = r.word.join("");
+  let verdict;
+  if (r.number === 0) {
+    verdict = errors.size === 0 ? "Синдром нулевой: ошибок нет, слово принято как есть." : "Синдром нулевой, хотя разряды искажены: ошибки сложились в другое кодовое слово, получатель их не видит.";
+  } else if (r.outside) {
+    verdict = `Синдром ${r.number} больше n = ${n}: одна ошибка такого номера дать не может, значит ошибок несколько. Слово не меняется.`;
+  } else {
+    verdict = `Синдром ${r.number}: получатель меняет разряд ${r.number}.`;
+  }
+  const good = fixedText === sentText;
+  $("fix").innerHTML = `<div class="formula">${esc(verdict)}</div>
+    <div class="formula">передано <b>${sentText}</b><br>принято ${got.join("")}<br>после исправления <b>${fixedText}</b></div>
+    <p class="check">${good ? (errors.size <= 1 ? "Слово восстановлено: код исправляет одну ошибку." : "Слово восстановлено, но при нескольких ошибках это совпадение, а не свойство кода.") : `Слово не восстановлено: ошибок ${errors.size}, а код исправляет только одну.`}</p>`;
+}
+
+function resetData() {
+  data = new Array(hammingFreePositions(n).length).fill(0);
+}
+
+const sel = $("n");
+for (let v = 1; v <= 15; v++) sel.insertAdjacentHTML("beforeend", `<option value="${v}"${v === 7 ? " selected" : ""}>${v}</option>`);
+sel.addEventListener("input", () => { n = +sel.value; errors = new Set(); resetData(); render(); });
+$("reset").addEventListener("click", () => { errors = new Set(); render(); });
+$("zero").addEventListener("click", () => { resetData(); render(); });
+
+n = 7;
+data = [1, 0, 1, 1];
+errors = new Set([5]);
+render();
+</script>
+</body>
+</html>

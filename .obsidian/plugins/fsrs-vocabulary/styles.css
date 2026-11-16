@@ -1,0 +1,870 @@
+/* FSRS Vocabulary —styled dictionary view (reading mode). */
+
+.fsrs-vocabulary-dictionary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+}
+
+/* Header: properties table + related links */
+.fsrs-vocabulary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--size-4-2) var(--size-4-6);
+  padding-bottom: var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.fsrs-vocabulary-props {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--size-4-2) var(--size-4-4);
+  font-size: var(--font-ui-small);
+}
+
+.fsrs-vocabulary-prop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--size-4-1);
+}
+
+.fsrs-vocabulary-prop-key {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  font-size: var(--font-ui-smaller);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.fsrs-vocabulary-prop-value {
+  color: var(--text-normal);
+}
+
+/* Word cards */
+.fsrs-vocabulary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--size-4-2);
+}
+
+.fsrs-vocabulary-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+  padding: var(--size-4-3);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.fsrs-vocabulary-word {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-bold);
+  color: var(--text-normal);
+  line-height: 1.2;
+}
+
+.fsrs-vocabulary-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fsrs-vocabulary-field {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: baseline;
+}
+
+.fsrs-vocabulary-field-name {
+  flex: 0 0 auto;
+  min-width: 5em;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.fsrs-vocabulary-field-value {
+  color: var(--text-normal);
+}
+
+/* Inline media inside cells stays tidy. */
+.fsrs-vocabulary-card img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-s);
+}
+
+.fsrs-vocabulary-card .internal-embed audio {
+  width: 100%;
+}
+
+/* Toolbar */
+.fsrs-vocabulary-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fsrs-vocabulary-review-btn {
+  cursor: pointer;
+}
+
+/* Review modal */
+.fsrs-vocabulary-review-modal .fsrs-vocabulary-review-progress {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-align: center;
+  margin-bottom: var(--size-4-2);
+}
+
+.fsrs-vocabulary-review-front {
+  font-size: 1.8em;
+  font-weight: var(--font-bold);
+  text-align: center;
+  padding: var(--size-4-6) 0;
+}
+
+/* Sits under the question, and takes its place when the card turns over — see
+   the `is-joined` rules below for the default, where both stay. */
+.fsrs-vocabulary-review-back {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding: var(--size-4-6) 0 var(--size-4-4);
+}
+
+/* Nothing to reveal: the question stays, so claim no space. */
+.fsrs-vocabulary-review-back:empty {
+  padding: 0;
+}
+
+/* Joined card: question and answer share the space instead of each claiming a
+   full card's worth of it, and a rule marks where the answer starts. */
+.fsrs-vocabulary-review-modal.is-joined .fsrs-vocabulary-review-front {
+  padding: var(--size-4-6) 0 var(--size-4-3);
+}
+
+.fsrs-vocabulary-review-modal.is-joined .fsrs-vocabulary-review-back:not(:empty) {
+  padding: var(--size-4-3) 0 var(--size-4-4);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.fsrs-vocabulary-review-field {
+  text-align: center;
+}
+
+.fsrs-vocabulary-review-field-name {
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.fsrs-vocabulary-review-field-value {
+  font-size: var(--font-ui-large);
+  color: var(--text-normal);
+}
+
+.fsrs-vocabulary-review-controls {
+  display: flex;
+  justify-content: center;
+  gap: var(--size-4-2);
+  flex-wrap: wrap;
+}
+
+.fsrs-vocabulary-rate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  min-width: 4.5em;
+  padding: var(--size-4-2);
+}
+
+.fsrs-vocabulary-rate-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.fsrs-vocabulary-rate-again {
+  color: var(--text-error);
+}
+
+.fsrs-vocabulary-rate-easy {
+  color: var(--text-success);
+}
+
+.fsrs-vocabulary-review-done {
+  text-align: center;
+  font-size: var(--font-ui-large);
+  padding: var(--size-4-6) 0;
+}
+
+.fsrs-vocabulary-review-next {
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: var(--size-4-4);
+}
+
+/* Stats */
+.fsrs-vocabulary-stats {
+  display: grid;
+  /* A track was allowed down to 70px while the tile inside refused to shrink
+     below its content, so LEARNING spilled out of it. The floor is now wide
+     enough for the longest label (~5.5rem covers eight uppercase glyphs at
+     --font-ui-smaller), the tiles below are told they may shrink, and `min()`
+     keeps a single narrow column from overflowing its container. Five tiles now
+     want ~480px before wrapping instead of ~390px, so a narrow sidebar breaks
+     them to two rows sooner — better than clipped text. */
+  grid-template-columns: repeat(auto-fit, minmax(min(5.5rem, 100%), 1fr));
+  gap: var(--size-4-2);
+}
+
+.fsrs-vocabulary-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* A flex/grid item will not shrink below its content unless told to. */
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--size-4-2) var(--size-4-1);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  /* The clickable tile is a <button>, which inherits none of these. Obsidian sizes
+     every button to `--input-height` (30px), which is shorter than the value and its
+     label stacked — with `overflow: hidden` above, the label was squeezed to nothing
+     and a clickable tile showed a bare number. */
+  height: auto;
+  font-family: inherit;
+  text-align: center;
+  line-height: var(--line-height-tight);
+}
+
+.fsrs-vocabulary-stat-value {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-bold);
+}
+
+.fsrs-vocabulary-stat-label {
+  max-width: 100%;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  /* Was 0.04em; trimmed because tracking on eight uppercase glyphs is what put
+     the longest label over the tile's edge in the first place. */
+  letter-spacing: 0.03em;
+  /* Last resort. The track floor above is sized so this never actually clips;
+     it is here so an unusually wide font degrades to an ellipsis instead of
+     pushing the grid past its container again. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fsrs-vocabulary-stat.is-due .fsrs-vocabulary-stat-value {
+  color: var(--text-accent);
+}
+
+.fsrs-vocabulary-stats-empty {
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+/* An empty block is an ordinary state and stays quiet; a block that could not be
+   read is not, and at --text-faint it would read as the same shrug. */
+.fsrs-vocabulary-stats-empty.is-error {
+  color: var(--text-error);
+}
+
+/* A tile is a button only when it starts something. */
+.fsrs-vocabulary-stat.is-clickable {
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-stat.is-clickable:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+/* In a stats block the dictionary tiles sit above the numbers. Spelled out for both
+   halves of the shelf rather than leaning on the grid's own bottom margin, so the
+   gap does not depend on which kind of tile happens to come last. */
+.fsrs-vocabulary-tile-list + .fsrs-vocabulary-stats,
+.fsrs-vocabulary-tiles + .fsrs-vocabulary-stats {
+  margin-top: var(--size-4-3);
+}
+
+/* Hide Obsidian's status bar only while it is empty and a dictionary view is
+   active — some themes paint the empty bar as a stray floating pill. The class
+   is toggled on <body> from the plugin (which checks emptiness in JS). */
+body.fsrs-vocabulary-hide-status .status-bar {
+  display: none;
+}
+
+/* Due counter in the status bar. The plugin hides the item outright at zero, so
+   the rule above still sees an empty bar as empty. */
+.fsrs-vocabulary-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-1);
+}
+
+.fsrs-vocabulary-status-icon {
+  display: inline-flex;
+}
+
+.fsrs-vocabulary-status-icon .svg-icon {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+/* Editable view header title (renames the file) */
+.fsrs-vocabulary-header-title {
+  cursor: text;
+}
+
+/* Interactive dictionary view */
+.fsrs-vocabulary-view {
+  padding: var(--size-4-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-4);
+  overflow-y: auto;
+}
+
+.fsrs-vocabulary-view-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.fsrs-vocabulary-view-toolbar-spacer {
+  flex: 1;
+}
+
+.fsrs-vocabulary-view-search .search-input-container {
+  width: 100%;
+}
+
+.fsrs-vocabulary-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  cursor: pointer;
+}
+
+/* A tool button with its options caret tucked into the bottom-right corner. */
+.fsrs-vocabulary-tool-split {
+  position: relative;
+  display: inline-flex;
+}
+
+.fsrs-vocabulary-tool-split .fsrs-vocabulary-tool,
+.fsrs-vocabulary-tool-split .fsrs-vocabulary-review-btn {
+  padding-right: var(--size-4-5);
+}
+
+.fsrs-vocabulary-tool-caret {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: var(--size-4-4);
+  height: var(--size-4-4);
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-tool-caret:hover {
+  color: var(--text-normal);
+  background: transparent;
+}
+
+.fsrs-vocabulary-tool-caret svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.fsrs-vocabulary-tool-icon {
+  display: inline-flex;
+}
+
+/* A tool button standing for a state that is currently on (muted reminders). */
+.fsrs-vocabulary-tool.is-active {
+  color: var(--text-muted);
+}
+
+.fsrs-vocabulary-tool-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.fsrs-vocabulary-view-empty {
+  color: var(--text-faint);
+  text-align: center;
+  padding: var(--size-4-6) 0;
+}
+
+.fsrs-vocabulary-card-editable {
+  position: relative;
+  /* Reserve a top strip so the hover handle/delete never sit over the first
+     cell's content (images, audio players, or the word itself). */
+  padding-top: calc(var(--size-4-3) + var(--icon-s));
+}
+
+.fsrs-vocabulary-card-delete {
+  position: absolute;
+  top: var(--size-4-1);
+  right: var(--size-4-1);
+  padding: 2px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+
+.fsrs-vocabulary-card-editable:hover .fsrs-vocabulary-card-delete {
+  opacity: 1;
+}
+
+.fsrs-vocabulary-card-delete:hover {
+  color: var(--text-error);
+}
+
+.fsrs-vocabulary-card-delete svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.fsrs-vocabulary-editable {
+  cursor: text;
+  border-radius: var(--radius-s);
+}
+
+.fsrs-vocabulary-editable:hover {
+  background: var(--background-modifier-hover);
+}
+
+.fsrs-vocabulary-editable.is-empty {
+  color: var(--text-faint);
+}
+
+.fsrs-vocabulary-edit-input {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+/* Theory block (editable) */
+.fsrs-vocabulary-view-theory {
+  position: relative;
+}
+
+.fsrs-vocabulary-theory-bar {
+  position: absolute;
+  top: var(--size-4-1);
+  right: var(--size-4-1);
+  z-index: 1;
+}
+
+.fsrs-vocabulary-theory-edit {
+  padding: 2px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+
+.fsrs-vocabulary-view-theory:hover .fsrs-vocabulary-theory-edit {
+  opacity: 1;
+}
+
+.fsrs-vocabulary-theory-edit svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.fsrs-vocabulary-theory-input {
+  width: 100%;
+  font-family: var(--font-monospace);
+  resize: vertical;
+}
+
+.fsrs-vocabulary-theory-controls {
+  display: flex;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.fsrs-vocabulary-view-empty.is-inline {
+  padding: var(--size-4-2);
+  cursor: text;
+}
+
+/* Drag & drop reordering */
+.fsrs-vocabulary-card-handle {
+  position: absolute;
+  top: var(--size-4-1);
+  left: var(--size-4-1);
+  display: inline-flex;
+  color: var(--text-faint);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+
+.fsrs-vocabulary-card-editable:hover .fsrs-vocabulary-card-handle {
+  opacity: 1;
+}
+
+.fsrs-vocabulary-card-handle svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.fsrs-vocabulary-card.is-dragging {
+  opacity: 0.4;
+}
+
+/* Insert-position indicator while dragging */
+.fsrs-vocabulary-card.drop-before {
+  box-shadow: inset 3px 0 0 0 var(--interactive-accent);
+}
+
+.fsrs-vocabulary-card.drop-after {
+  box-shadow: inset -3px 0 0 0 var(--interactive-accent);
+}
+
+/* Import modal */
+.fsrs-vocabulary-import-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.fsrs-vocabulary-import-input {
+  width: 100%;
+  font-family: var(--font-monospace);
+  resize: vertical;
+}
+
+.fsrs-vocabulary-import-count {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  margin: var(--size-4-2) 0;
+}
+
+/* Modal validation message */
+.fsrs-vocabulary-modal-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+  margin-top: var(--size-4-2);
+}
+
+/* Review options dialog */
+.fsrs-vocabulary-options-section {
+  margin: var(--size-4-3) 0;
+}
+
+.fsrs-vocabulary-options-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-bottom: var(--size-4-1);
+}
+
+.fsrs-vocabulary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+}
+
+.fsrs-vocabulary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  box-shadow: none;
+}
+
+/* The preset chip wraps two buttons, so it is a plain box itself. */
+.fsrs-vocabulary-chip.is-preset {
+  padding-right: var(--size-4-1);
+}
+
+.fsrs-vocabulary-chip-label {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-chip:hover {
+  border-color: var(--background-modifier-border-hover);
+}
+
+.fsrs-vocabulary-chip.is-active {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+
+.fsrs-vocabulary-chip-note {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  margin-left: var(--size-4-1);
+}
+
+.fsrs-vocabulary-chip-menu {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-chip-menu:hover {
+  color: var(--text-normal);
+}
+
+.fsrs-vocabulary-chip-menu svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.fsrs-vocabulary-options-warning {
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+  margin-top: var(--size-4-2);
+}
+
+/* Dashboard */
+.fsrs-vocabulary-dashboard {
+  padding: var(--size-4-4);
+  overflow-y: auto;
+}
+
+.fsrs-vocabulary-dashboard-bar {
+  display: flex;
+  gap: var(--size-4-2);
+  margin: var(--size-4-4) 0;
+}
+
+.fsrs-vocabulary-dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-ui-small);
+}
+
+.fsrs-vocabulary-dashboard-table th {
+  text-align: left;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: var(--font-normal);
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.fsrs-vocabulary-dashboard-table td {
+  padding: var(--size-4-1) var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.fsrs-vocabulary-dashboard-table tr.is-muted td {
+  color: var(--text-faint);
+}
+
+/* The Iconic icon before a dictionary's name. Fixed width, so an emoji and a
+   Lucide glyph leave the names starting at the same place. */
+.fsrs-vocabulary-dashboard-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  margin-right: var(--size-4-2);
+  vertical-align: -0.15em;
+  line-height: 1;
+}
+
+.fsrs-vocabulary-dashboard-icon .svg-icon {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+.fsrs-vocabulary-dashboard-link {
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-dashboard-badge {
+  margin-left: var(--size-4-2);
+  padding: 0 var(--size-4-1);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-border);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.fsrs-vocabulary-dashboard-actions {
+  display: flex;
+  gap: var(--size-4-1);
+  justify-content: flex-end;
+}
+
+.fsrs-vocabulary-dashboard-actions button {
+  padding: var(--size-4-1);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.fsrs-vocabulary-dashboard-actions button:hover {
+  color: var(--text-normal);
+}
+
+/* Dictionary shelf: icon tiles above, a one-column list of text tiles below. */
+.fsrs-vocabulary-tiles-view {
+  padding: var(--size-4-4);
+}
+
+.fsrs-vocabulary-tiles {
+  display: grid;
+  /* `auto-fit`, not `auto-fill`: empty tracks collapse, so the tiles on the last row
+     grow into the space instead of leaving a column-wide gap beside them. A stats
+     block covering one iconed dictionary was mostly gap. */
+  grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+  gap: var(--size-4-3);
+  margin-bottom: var(--size-4-4);
+}
+
+.fsrs-vocabulary-tile-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.fsrs-vocabulary-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  min-width: 0;
+  padding: var(--size-4-3);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  color: var(--text-normal);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* An icon tile stacks; a text tile in the list reads as a row. */
+.fsrs-vocabulary-tile:not(.is-flat) {
+  flex-direction: column;
+  text-align: center;
+}
+
+.fsrs-vocabulary-tile:hover {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  text-decoration: none;
+}
+
+.fsrs-vocabulary-tile.is-muted {
+  opacity: 0.6;
+}
+
+.fsrs-vocabulary-tile-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2em;
+  line-height: 1;
+}
+
+.fsrs-vocabulary-tile-icon .svg-icon {
+  width: 2em;
+  height: 2em;
+}
+
+.fsrs-vocabulary-tile-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.fsrs-vocabulary-tile-name {
+  font-weight: var(--font-semibold);
+  /* Long dictionary names must not stretch the grid track. */
+  overflow-wrap: anywhere;
+}
+
+.fsrs-vocabulary-tile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1) var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.fsrs-vocabulary-tile:not(.is-flat) .fsrs-vocabulary-tile-meta {
+  justify-content: center;
+}
+
+.fsrs-vocabulary-tile-due {
+  color: var(--text-accent);
+}
+
+.fsrs-vocabulary-tile-badge {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Tucked into the corner so it never competes with the name for the click. */
+.fsrs-vocabulary-tile-review {
+  position: absolute;
+  top: var(--size-4-1);
+  right: var(--size-4-1);
+  padding: var(--size-4-1);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-faint);
+  opacity: 0;
+}
+
+.fsrs-vocabulary-tile:hover .fsrs-vocabulary-tile-review,
+.fsrs-vocabulary-tile-review:focus-visible {
+  opacity: 1;
+}
+
+.fsrs-vocabulary-tile-review:hover {
+  color: var(--text-accent);
+}
+
+/* The "install Iconic" line under a setting that cannot be switched on yet. */
+.fsrs-vocabulary-setting-hint {
+  margin-top: var(--size-2-2);
+}

@@ -1,0 +1,25 @@
+{
+  "newDictionaryColumns": [
+    "word",
+    "transcription",
+    "translation",
+    "example"
+  ],
+  "fsrsRetention": 0.9,
+  "fsrsWeights": null,
+  "fsrsFit": null,
+  "reviewScope": "note",
+  "defaultView": "dictionary",
+  "defaultSort": "manual",
+  "properties": [
+    "up",
+    "prev. next"
+  ],
+  "keepQuestionOnReveal": true,
+  "statsIncludeMuted": false,
+  "iconicIntegration": true,
+  "remindersEnabled": true,
+  "remindOnStartup": true,
+  "remindEveryMinutes": 5,
+  "statusBarCounter": true
+}

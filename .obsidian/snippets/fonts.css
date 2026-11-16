@@ -1,0 +1,9 @@
+.doki-text {
+  font-family: "Doki", sans-serif;
+  font-weight: normal;   /* можно менять */
+  font-style: normal;    /* можно менять */
+  color: #ffdaef;        /* пример цвета */
+  /*-webkit-text-stroke: 1px white;  /* белая обводка, ширину можно менять */
+  /*text-shadow: 0 0 2px white; */
+}
+

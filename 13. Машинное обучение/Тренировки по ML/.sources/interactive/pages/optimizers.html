@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница оптимизаторов</title>
+<style>
+/*COMMON_CSS*/
+.stack { display: grid; gap: 12px; min-width: 0; }
+.legend svg { vertical-align: middle; margin-right: 5px; overflow: visible; }
+.lrs { display: grid; gap: 8px; }
+.lrs label { font-size: 13px; }
+table.res { font-size: 11px; table-layout: auto; }
+table.res td, table.res th { white-space: nowrap; padding: 2px 2px 2px 8px; }
+table.res td:first-child, table.res th:first-child { padding-left: 2px; }
+table.res td:nth-child(n+2), table.res th:nth-child(n+2) { text-align: right; }
+td.bad { color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница оптимизаторов</h1>
+  <p class="lead">Шесть методов стартуют из одной точки на одной поверхности и делают одинаковое число шагов; у каждого свой шаг η. Фон — линии уровня потерь, крестик — минимум. Метод различается штрихом линии, формой отметки и подписью у конца пути, а не цветом. Щелчок по полю переносит старт</p>
+  <div class="wrap">
+    <div class="stack">
+      <canvas id="cv" class="square" width="640" height="640" aria-label="Траектории шести методов"></canvas>
+      <canvas id="loss" width="640" height="340" aria-label="Потеря каждого метода по шагам"></canvas>
+    </div>
+    <div class="panel">
+      <label>Поверхность
+        <select id="fn"></select>
+      </label>
+      <label>Число шагов: <b id="sv"></b>
+        <input id="steps" type="range" min="1" max="300" step="1" value="100">
+      </label>
+      <label>Инерция ρ (Momentum, Nesterov) = <b id="rv"></b>
+        <input id="rho" type="range" min="0" max="0.99" step="0.01" value="0.9">
+      </label>
+      <label>Среднее β (RMSProp) = <b id="bv"></b>
+        <input id="beta" type="range" min="0" max="0.999" step="0.001" value="0.9">
+      </label>
+      <div class="lrs" id="lrs"></div>
+      <button id="preset"></button>
+      <table class="res compact" id="res"></table>
+      <div id="note"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const NAMES = { sgd: "SGD", momentum: "Momentum", nesterov: "Nesterov", adagrad: "Adagrad", rmsprop: "RMSProp", adam: "Adam" };
+// Look of each method: dash of its line and shape of its marker; no colour tells them apart.
+const STYLE = {
+  sgd: { dash: [], mark: "circle" }, momentum: { dash: [9, 4], mark: "square" }, nesterov: { dash: [2, 4], mark: "triangle" },
+  adagrad: { dash: [9, 3, 2, 3], mark: "diamond" }, rmsprop: { dash: [5, 3], mark: "cross" }, adam: { dash: [14, 5], mark: "plus" },
+};
+const MIN_LOG = -30;   // the loss axis is cut here when the data go lower
+const cv = $("cv"), ctx = cv.getContext("2d"), lossCv = $("loss"), lx = lossCv.getContext("2d");
+let start = null;
+
+$("fn").innerHTML = Object.entries(SURFACES).map(([id, s]) => `<option value="${id}">${s.label}</option>`).join("");
+$("fn").value = "rosen";
+$("lrs").innerHTML = OPT_METHODS.map((m) => `<label>η ${NAMES[m]} = <b id="lv-${m}"></b><input id="lr-${m}" type="range" min="-4" max="1" step="0.001" value="0"></label>`).join("");
+$("preset").textContent = "значения из таблицы заметки";
+
+function applyPreset() {
+  $("steps").value = OPT_PRESET.steps; $("rho").value = OPT_PRESET.rho; $("beta").value = OPT_PRESET.beta;
+  OPT_METHODS.forEach((m) => { $(`lr-${m}`).value = OPT_PRESET.lr[m]; });
+}
+
+function marker(c, shape, x, y, r) {
+  c.beginPath();
+  if (shape === "circle") c.arc(x, y, r, 0, 2 * Math.PI);
+  else if (shape === "square") c.rect(x - r, y - r, 2 * r, 2 * r);
+  else if (shape === "triangle") { c.moveTo(x, y - r - 1); c.lineTo(x + r + 1, y + r); c.lineTo(x - r - 1, y + r); c.closePath(); }
+  else if (shape === "diamond") { c.moveTo(x, y - r - 1); c.lineTo(x + r + 1, y); c.lineTo(x, y + r + 1); c.lineTo(x - r - 1, y); c.closePath(); }
+  else if (shape === "cross") { c.moveTo(x - r, y - r); c.lineTo(x + r, y + r); c.moveTo(x + r, y - r); c.lineTo(x - r, y + r); }
+  else { c.moveTo(x - r - 1, y); c.lineTo(x + r + 1, y); c.moveTo(x, y - r - 1); c.lineTo(x, y + r + 1); }
+  if (["circle", "square", "triangle", "diamond"].includes(shape)) { c.fillStyle = css("--surface"); c.fill(); }
+  c.stroke();
+}
+
+function runs() {
+  const S = SURFACES[$("fn").value], s = start || S.start;
+  const steps = +$("steps").value, rho = +$("rho").value, beta = +$("beta").value;
+  return OPT_METHODS.map((m) => {
+    const lr = 10 ** +$(`lr-${m}`).value;
+    const path = optPath(m, S.g, s, { lr, steps, rho, beta });
+    const end = path[path.length - 1];
+    return { m, lr, path, f: path.map(S.f), blown: optDiverged(S.f, path), dist: Math.hypot(end[0] - S.min[0], end[1] - S.min[1]) };
+  });
+}
+
+function drawSurface(R, S, s) {
+  const f = frame(cv, S.box, S.box, { margin: [30, 10, 10, 26], equal: true });
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  levelBands(ctx, f, S.f);
+  axes(ctx, f, { xticks: [S.box[0], 0, S.box[1]], yticks: [Math.round(f.y0), 0, Math.round(f.y1)] });
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  const tags = [];
+  const k = Math.max(1, Math.ceil(R[0].path.length / 12));
+  R.forEach(({ m, path, blown }) => {
+    const st = STYLE[m];
+    const ok = path.map((p) => p.every(Number.isFinite) && Math.hypot(p[0], p[1]) < 1e6);
+    const pts = path.map((p, i) => (ok[i] ? [f.px(p[0]), f.py(p[1])] : null));
+    ctx.strokeStyle = css("--text"); ctx.lineWidth = 2;
+    // a segment is drawn only between two finite points; a blown run is cut where it leaves the numbers
+    polyline(ctx, pts.filter(Boolean), css("--text"), 2, st.dash);
+    ctx.lineWidth = 1.6;
+    pts.forEach((p, i) => { if (p && i > 0 && i % k === 0) marker(ctx, st.mark, p[0], p[1], 3.5); });
+    // the label sits at the last point that is still inside the view
+    let last = null;
+    pts.forEach((p, i) => { if (p && p[0] >= f.ml && p[0] <= f.ml + f.W && p[1] >= f.mt && p[1] <= f.mt + f.H) last = p; });
+    if (last) tags.push({ text: NAMES[m] + (blown ? ", расходится" : ""), x: last[0], y: last[1] });
+  });
+  // start and minimum
+  const [sx, sy] = [f.px(s[0]), f.py(s[1])];
+  ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(sx, sy, 7, 0, 2 * Math.PI); ctx.stroke();
+  const [mx, my] = [f.px(S.min[0]), f.py(S.min[1])];
+  ctx.beginPath(); ctx.moveTo(mx - 6, my - 6); ctx.lineTo(mx + 6, my + 6); ctx.moveTo(mx + 6, my - 6); ctx.lineTo(mx - 6, my + 6); ctx.stroke();
+  // labels: stacked apart vertically so that ends close to each other stay readable
+  ctx.font = font(12); ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  tags.sort((a, b) => a.y - b.y);
+  let prev = -Infinity;
+  tags.forEach((t) => {
+    t.ly = Math.max(t.y, prev + 15); prev = t.ly;
+    const w = ctx.measureText(t.text).width + 8, lxp = Math.min(t.x + 9, f.ml + f.W - w - 2);
+    ctx.fillStyle = css("--surface"); ctx.globalAlpha = 0.88; ctx.fillRect(lxp - 2, t.ly - 8, w, 16);
+    ctx.globalAlpha = 1; ctx.fillStyle = css("--text"); mathText(ctx, t.text, lxp + 2, t.ly);
+    ctx.strokeStyle = css("--text-2"); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(lxp - 2, t.ly); ctx.stroke();
+  });
+  ctx.restore();
+  cv._frame = f;
+}
+
+function drawLoss(R) {
+  const c = lx;
+  c.clearRect(0, 0, lossCv.width, lossCv.height);
+  const good = R.filter((r) => !r.blown);
+  const pool = (good.length ? good : R).flatMap((r) => r.f).filter((v) => Number.isFinite(v) && v > 0);
+  // The lower limit follows the data down to the power of ten below the smallest loss; below 1e-30 it is cut and the title says so.
+  const floorLog = Math.floor(Math.log10(Math.min(...pool)));
+  const lo = Math.max(floorLog, MIN_LOG);
+  let hi = Math.ceil(Math.log10(Math.max(...pool)));
+  if (hi <= lo) hi = lo + 1;
+  const steps = R[0].path.length - 1;
+  const f = frame(lossCv, [0, steps], [lo, hi], { margin: [64, 28, 190, 44] });
+  const xticks = [0]; for (let t = steps > 100 ? 50 : steps > 40 ? 20 : 10; t <= steps; t += steps > 100 ? 50 : steps > 40 ? 20 : 10) xticks.push(t);
+  axes(c, f, { xticks, yticks: logTicks(lo, hi), xlabel: "шаг", ylabel: "потеря, лог. шкала" + (floorLog < MIN_LOG ? " (обрезана снизу)" : ""), yfmt: (t) => num(10 ** t) });
+  const ly = (v) => f.py(Math.max(lo, Math.min(hi, Math.log10(v))));
+  const ends = [];
+  c.save(); c.beginPath(); c.rect(f.ml, f.mt, f.W, f.H); c.clip();
+  R.forEach(({ m, f: fs, blown }) => {
+    const st = STYLE[m], pts = [];
+    fs.forEach((v, k) => { if (Number.isFinite(v)) pts.push([f.px(k), v > 0 ? ly(v) : f.py(lo)]); });
+    polyline(c, pts, css("--text"), 2, st.dash);
+    c.strokeStyle = css("--text"); c.lineWidth = 1.4;
+    const every = Math.max(1, Math.ceil(fs.length / 12));
+    pts.forEach((p, k) => { if (k > 0 && k % every === 0) marker(c, st.mark, p[0], p[1], 3); });
+    const last = pts[pts.length - 1];
+    ends.push({ text: NAMES[m] + (blown ? ", расходится" : ""), y: last ? last[1] : f.mt, look: { col: "--text", w: 2, dash: st.dash }, strong: !blown });
+  });
+  c.restore();
+  endLabels(c, f, ends);
+}
+
+function table(R, S) {
+  $("res").innerHTML = `<tr><th>метод</th><th>η</th><th>потеря</th><th>до мин.</th></tr>` + R.map((r) => {
+    const svg = `<svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="currentColor" stroke-width="2" stroke-dasharray="${STYLE[r.m].dash.join(" ")}"/></svg>`;
+    return `<tr class="${r.blown ? "bad" : ""}"><td>${svg}${NAMES[r.m]}</td><td>${num(r.lr, 3)}</td><td>${r.blown ? "расходится" : num(S.f(r.path[r.path.length - 1]))}</td><td>${r.blown ? "∞" : num(r.dist)}</td></tr>`;
+  }).join("");
+}
+
+function draw() {
+  const S = SURFACES[$("fn").value], s = start || S.start;
+  $("sv").textContent = $("steps").value; $("rv").textContent = toComma(+$("rho").value, 2); $("bv").textContent = toComma(+$("beta").value, 3);
+  OPT_METHODS.forEach((m) => { $(`lv-${m}`).textContent = num(10 ** +$(`lr-${m}`).value, 3); });
+  const R = runs();
+  drawSurface(R, S, s); drawLoss(R); table(R, S);
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  const f = cv._frame, [px, py] = canvasXY(cv, e);
+  start = [f.dx(px), f.dy(py)];
+  draw();
+});
+$("fn").addEventListener("input", () => { start = null; draw(); });
+["steps", "rho", "beta", ...OPT_METHODS.map((m) => `lr-${m}`)].forEach((id) => $(id).addEventListener("input", draw));
+$("preset").addEventListener("click", () => { applyPreset(); draw(); });
+$("note").innerHTML = [
+  `Шаги по умолчанию — из таблицы заметки: для Розенброка и этого старта это точки логарифмической сетки с наименьшей потерей после ${OPT_PRESET.steps} шагов среди путей, не вышедших из кадра`,
+  "Выбор идёт по той же потере, которую страница показывает: валидации у голой поверхности нет, так что это лучший шаг на этой задаче, а не рекомендация. На другой поверхности или со старта в другом месте эти шаги ничего не гарантируют",
+  `Правила — как в заметке: Momentum и Nesterov v ← ρv + g, w ← w − ηv (Nesterov берёт g в точке w − ηρv); Adagrad и RMSProp делят на √кэша + ε; у Adam β₁ = ${toComma(OPT_FIXED.beta1, null)}, β₂ = ${toComma(OPT_FIXED.beta2, null)} и поправка смещения; везде ε = ${OPT_FIXED.eps.toExponential(0).replace("e-", "·10⁻")}`,
+  "Пути сверены с figures/06/opt_common.py. Метка \"расходится\": потеря в конце не число или в тысячу раз больше стартовой",
+].map((t) => `<p class="note">${t}</p>`).join("");
+applyPreset();
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

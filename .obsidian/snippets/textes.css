@@ -1,0 +1,244 @@
+/* 🌊 Волна (переработано) */
+.wave-text span {
+  display: inline-block;
+  animation: wave-float 1s infinite ease-in-out;
+  animation-delay: calc(var(--i) * 0.1s);
+}
+@keyframes wave-float {
+  0%,100% { transform: translateY(0); }
+  50%     { transform: translateY(-10px); }
+}
+
+/* 💀 Кислотное свечение */
+.sick-glow-text {
+  display: inline-block;
+  animation: sick-glow 1.2s infinite alternate;
+  color: #adff2f;
+  font-weight: bold;
+}
+@keyframes sick-glow {
+  0% {
+    text-shadow:
+      0 0 4px #7fff00,
+      0 0 8px #adff2f,
+      0 0 12px #ffff00;
+  }
+  100% {
+    text-shadow:
+      0 0 12px #ffff00,
+      0 0 20px #ff0,
+      0 0 30px #f0f,
+      0 0 40px #0ff;
+    color: #ff69b4;
+  }
+}
+
+/* 🌀 Вихрь — текст засасывается */
+.vortex-text {
+  display: inline-block;
+  animation: vortex 2.5s infinite ease-in-out;
+}
+@keyframes vortex {
+  0%   { transform: rotate(0deg) scale(1); opacity: 1; }
+  50%  { transform: rotate(180deg) scale(0.6); opacity: 0.5; }
+  100% { transform: rotate(360deg) scale(1); opacity: 1; }
+}
+
+/* 🤢 Тряска */
+.shake-text {
+  display: inline-block;
+  animation: shake 0.4s infinite;
+}
+@keyframes shake {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(2px, -2px); }
+  50%  { transform: translate(-2px, 2px); }
+  75%  { transform: translate(2px, 2px); }
+  100% { transform: translate(-2px, -2px); }
+}
+
+/* 💓 Пульс */
+.pulse-text {
+  display: inline-block;
+  animation: pulse 1.5s infinite ease-in-out;
+}
+@keyframes pulse {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%     { transform: scale(1.2); opacity: 0.6; }
+}
+
+/* 👻 Призрачное мерцание */
+.ghost-text {
+  display: inline-block;
+  animation: ghost-fade 3s infinite ease-in-out;
+  color: #ccc;
+  text-shadow: 0 0 4px #fff;
+}
+@keyframes ghost-fade {
+  0%,100% { opacity: 0.1; transform: translateY(0); }
+  50%     { opacity: 0.6; transform: translateY(-3px); }
+}
+
+/* 🌃 Неоновая вывеска */
+.neon-sign-text {
+  display: inline-block;
+  color: #e0dede;
+  font-weight: bold;
+  font-family: 'Courier New', monospace;
+  text-shadow:
+    0 0 3px #fff,
+    0 0 6px #f0f,
+    0 0 10px #f0f,
+    0 0 20px #f0f;
+  animation: neon-blink 6s infinite;
+}
+@keyframes neon-blink {
+  0%,5%,10%,100% {
+    opacity: 1;
+    text-shadow:
+      0 0 3px #fff,
+      0 0 6px #f0f,
+      0 0 10px #f0f,
+      0 0 20px #f0f;
+  }
+  6%,8% {
+    opacity: 0.1;
+    text-shadow: none;
+  }
+  50% {
+    opacity: 0.95;
+    text-shadow:
+      0 0 2px #fff,
+      0 0 4px #f0f,
+      0 0 8px #f0f,
+      0 0 16px #f0f;
+  }
+  70%,72% {
+    opacity: 0.2;
+    text-shadow: none;
+  }
+}
+
+.pixel-marquee {
+  display: inline-block;
+  font-family: monospace;
+  font-weight: bold;
+  color: #ffb347;
+  letter-spacing: 2px;
+}
+
+.pixel-marquee span {
+  display: inline-block;
+  opacity: 0;
+  animation: pixel-fade-cycle 2.4s infinite;
+  animation-delay: calc(var(--i) * 0.2s);
+  color: #ffb347;
+  text-shadow:
+    0 0 1px #aa6600,
+    0 0 3px #ffcc33,
+    0 0 6px #ffcc33;
+}
+
+@keyframes pixel-fade-cycle {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 1; }
+}
+
+
+/* 🩸 Эпилептическое мерцание */
+.epileptic-text {
+  display: inline-block;
+  font-weight: bold;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  position: relative;
+  animation: epileptic-flicker 0.05s infinite;
+  text-shadow:
+    0 0 1px red,
+    0 0 2px lime,
+    0 0 4px blue,
+    1px 1px 0 #000;
+  mix-blend-mode: difference;
+  filter: contrast(200%) brightness(180%);
+}
+@keyframes epileptic-flicker {
+  0%,49%,100% { opacity: 1; transform: translate(0,0) skewX(0); }
+  50%         { opacity: 0; transform: translateY(-1px) skewX(0); }
+  70%         { transform: translateY(1px) skewX(0); }
+  90%         { transform: translateY(-1px) skewY(1deg); }
+}
+.epileptic-text::before,
+.epileptic-text::after {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: red;
+  opacity: 0.2;
+  z-index: -1;
+  transform: translate(2px, 0) rotate(-1deg);
+  animation: scribble 0.1s infinite alternate;
+}
+.epileptic-text::after {
+  color: cyan;
+  transform: translate(-2px, 1px) rotate(1deg);
+}
+@keyframes scribble {
+  0%   { clip-path: inset(0 0 10% 0); }
+  100% { clip-path: inset(10% 0 0 0); }
+}
+
+/* 🧠 Глитч-психоз */
+.psychosis-text {
+  display: inline-block;
+  position: relative;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  color: #fff;
+  text-shadow:
+    0 0 2px #fff,
+    1px 1px 2px #f00,
+    -1px -1px 2px #0ff;
+  animation: glitch-flicker 0.06s infinite;
+  filter: brightness(180%) contrast(250%) saturate(300%);
+  mix-blend-mode: difference;
+  transform: skewX(-2deg);
+}
+.psychosis-text::before,
+.psychosis-text::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  overflow: hidden;
+  color: #0ff;
+  opacity: 0.3;
+  z-index: -1;
+  animation: glitch-layer 0.08s infinite;
+  pointer-events: none;
+}
+.psychosis-text::after {
+  color: #f0f;
+  animation-delay: 0.03s;
+}
+@keyframes glitch-flicker {
+  0%,100% { transform: translate(0,0) skewX(-2deg); opacity: 1; }
+  10%     { transform: translate(-1px,1px) skewX(1deg); opacity: 0.7; }
+  20%     { transform: translate(1px,-2px) skewX(-3deg); opacity: 0.8; }
+  30%     { transform: translate(-1px,1px) skewX(2deg); opacity: 0.6; }
+  40%     { transform: translate(2px,0) skewX(-1deg); opacity: 0.9; }
+  50%     { transform: translate(-2px,2px) skewX(1deg); opacity: 0.4; }
+  60%     { transform: translate(1px,-1px) skewX(0deg); opacity: 0.7; }
+  70%     { transform: translate(0,2px) skewX(-2deg); opacity: 0.9; }
+  80%     { transform: translate(-1px,0) skewX(2deg); opacity: 0.5; }
+  90%     { transform: translate(1px,1px) skewX(-1deg); opacity: 0.6; }
+}
+@keyframes glitch-layer {
+  0%   { clip-path: inset(0 0 90% 0); transform: translate(-1px,-1px); }
+  25%  { clip-path: inset(10% 0 70% 0); transform: translate(1px,1px); }
+  50%  { clip-path: inset(20% 0 40% 0); transform: translate(-2px,0); }
+  75%  { clip-path: inset(30% 0 30% 0); transform: translate(2px,-1px); }
+  100% { clip-path: inset(40% 0 10% 0); transform: translate(0,2px); }
+}
+

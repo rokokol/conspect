@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница дистилляции знаний</title>
+<style>
+/*COMMON_CSS*/
+.stack { display: grid; gap: 12px; min-width: 0; }
+.zones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .zones { grid-template-columns: 1fr; } }
+.zones figure { margin: 0; display: grid; gap: 4px; }
+.zones figcaption { font-size: 12px; color: var(--text-2); line-height: 1.3; min-height: 4.2em; }
+.zones figcaption b { color: var(--text); font-weight: normal; }
+canvas.zone { cursor: crosshair; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btns button { flex: 1 1 auto; }
+#info { font-size: 12px; min-height: 5em; }
+#info table { margin-top: 4px; }</style>
+</head>
+<body>
+<main>
+  <h1>Песочница дистилляции знаний</h1>
+  <p class="lead">Учитель — градиентный бустинг, ученик — маленькая сеть. Ученик минимизирует L = λ·H(y, softmax(z)) + (1 − λ)·T²·H(softmax(v/T), softmax(z/T)): v — логиты учителя, z — ученика, y — жёсткая метка, λ — вес жёсткой части</p>
+  <p class="lead">Рядом учатся два ученика с одним стартом весов: на одних жёстких метках (λ = 1) и на смеси. Щелчок по любой зоне показывает мягкую метку учителя в этой точке</p>
+  <div class="wrap">
+    <div class="stack">
+      <div class="zones">
+        <figure><canvas class="zone square" id="zt" width="300" height="300" aria-label="Зона учителя"></canvas><figcaption id="ct"></figcaption></figure>
+        <figure><canvas class="zone square" id="zh" width="300" height="300" aria-label="Зона ученика на жёстких метках"></canvas><figcaption id="ch"></figcaption></figure>
+        <figure><canvas class="zone square" id="zs" width="300" height="300" aria-label="Зона ученика на мягких метках"></canvas><figcaption id="cs"></figcaption></figure>
+      </div>
+      <canvas id="loss" width="640" height="320" aria-label="Логарифмическая потеря учеников по эпохам"></canvas>
+      <div id="table"></div>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="data"><option value="moons" selected>moons</option><option value="circles">circles</option></select>
+      </label>
+      <label>Деревьев у учителя: <b id="nv"></b>
+        <input id="trees" type="range" min="10" max="200" step="10" value="100">
+      </label>
+      <label>Глубина деревьев учителя
+        <select id="depth"><option>1</option><option selected>2</option><option>3</option></select>
+      </label>
+      <label>Нейронов в скрытом слое ученика: <b id="hv"></b>
+        <input id="hidden" type="range" min="2" max="16" step="1" value="4">
+      </label>
+      <label>Температура T = <b id="Tv"></b>
+        <input id="T" type="range" min="-0.30103" max="1.50515" step="any" value="0.30103">
+      </label>
+      <label>Вес жёсткой части λ = <b id="lv"></b>
+        <input id="lam" type="range" min="0" max="1" step="0.05" value="0.5">
+      </label>
+      <label>Seed начальных весов
+        <input id="seed" type="number" min="0" step="1" value="1">
+      </label>
+      <div class="btns"><button id="reset">заново</button></div>
+      <div class="score" id="score"></div>
+      <div id="info"></div>
+      <div id="honest"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const E = 2000;      // epochs both students are trained for
+const LR = 1;        // step of full-batch gradient descent
+const ZN = 60;       // grid of the zones, 60 x 60 cells: coarser than the pixels, the boundary is stepped
+const sig = (x) => 1 / (1 + Math.exp(-x));
+const logLossOf = (p, y) => -Math.log(Math.max(1e-12, y ? p : 1 - p));
+const zc = { t: $("zt"), h: $("zh"), s: $("zs") }, lossCv = $("loss"), lx = lossCv.getContext("2d");
+
+let d, view, teacher, U, Ute, probe = null, running = false;
+let st = { h: null, s: null };   // students: {net, tr, te, epoch}
+const Tval = () => 10 ** +$("T").value;
+const lamVal = () => +$("lam").value;
+const hiddenN = () => +$("hidden").value;
+const tdec = (x) => boostingClfDecision(teacher, x);
+const optsOf = (kind) => (kind === "h" ? { T: 1, lam: 1 } : { T: Tval(), lam: lamVal() });
+
+const accOf = (pred, X, y) => accuracy(X.map(pred), y);
+const netPred = (net) => (x) => (mlpLogit(net, x) > 0 ? 1 : 0);
+const teaPred = (x) => (tdec(x) > 0 ? 1 : 0);
+const ceOf = (dec, X, y) => X.reduce((s, x, i) => s + logLossOf(sig(dec(x)), y[i]), 0) / X.length;
+
+function fitTeacher() {
+  d = DATA[$("data").value];
+  view = dataView(zc.t, d, 0.5);
+  teacher = fitBoostingClf(d.Xtr, d.ytr, { nEstimators: +$("trees").value, lr: 0.1, maxDepth: +$("depth").value });
+  U = d.Xtr.map(tdec); Ute = d.Xte.map(tdec);
+}
+
+function newStudent(kind) {
+  const net = mlpInit([hiddenN()], "tanh", +$("seed").value || 0);
+  st[kind] = { net, epoch: 0, tr: [mlpLoss(net, d.Xtr, d.ytr)], te: [mlpLoss(net, d.Xte, d.yte)] };
+}
+
+function stepStudent(s, kind) {
+  s.net = mlpStep(s.net, d.Xtr, d.ytr, LR, distillDelta(U, d.ytr, optsOf(kind)));
+  s.epoch++;
+  s.tr.push(mlpLoss(s.net, d.Xtr, d.ytr)); s.te.push(mlpLoss(s.net, d.Xte, d.yte));
+}
+
+// which: "soft" restarts only the student on soft labels (the hard one does not depend on T, λ or the teacher), "both" restarts both
+function restart(which) {
+  if (which === "both" || !st.h) newStudent("h");
+  newStudent("s");
+  const was = running;
+  running = true;
+  if (!was) requestAnimationFrame(loop);
+}
+
+function loop() {
+  if (!running) return;
+  const t0 = performance.now();
+  while (performance.now() - t0 < 12 && (st.h.epoch < E || st.s.epoch < E)) {
+    if (st.h.epoch < E) stepStudent(st.h, "h");
+    if (st.s.epoch < E) stepStudent(st.s, "s");
+  }
+  drawStudents();
+  if (st.h.epoch < E || st.s.epoch < E) requestAnimationFrame(loop); else running = false;
+}
+
+// ---------- drawing ----------
+
+function zoneOf(kind, proba) {
+  const cv = zc[kind], ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  drawClassifier(ctx, view, d, (x) => { const p = proba(x); return Number.isFinite(p) ? [1 - p, p] : null; }, [0, 1], { N: ZN });
+  if (probe) probeMark(ctx, ...view.toPx(probe));
+}
+const drawTeacher = () => zoneOf("t", (x) => sig(tdec(x)));
+function drawStudents() {
+  zoneOf("h", (x) => sig(mlpLogit(st.h.net, x)));
+  zoneOf("s", (x) => sig(mlpLogit(st.s.net, x)));
+  drawLoss(); score();
+}
+
+function drawLoss() {
+  const ctx = lx, cv = lossCv;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const all = [st.h.tr, st.h.te, st.s.tr, st.s.te].flat().filter((v) => Number.isFinite(v) && v > 0);
+  const lo = Math.max(Math.floor(Math.log10(Math.min(...all))), -9);
+  let hi = Math.ceil(Math.log10(Math.max(...all)));
+  if (hi <= lo) hi = lo + 1;
+  const f = frame(cv, [0, E], [lo, hi], { margin: [52, 28, 150, 44] });
+  axes(ctx, f, {
+    xticks: [0, 500, 1000, 1500, 2000], yticks: logTicks(lo, hi),
+    xlabel: "эпоха", ylabel: "логарифмическая потеря по жёстким меткам, лог. шкала", yfmt: (t) => num(10 ** t),
+  });
+  const looks = {
+    ht: { col: "--text", w: 2, dash: [], text: "жёсткие, обуч." },
+    hs: { col: "--text", w: 2, dash: [7, 4], text: "жёсткие, тест" },
+    st: { col: "--text-2", w: 2, dash: [], text: "мягкие, обуч." },
+    ss: { col: "--text-2", w: 2, dash: [7, 4], text: "мягкие, тест" },
+  };
+  const series = { ht: st.h.tr, hs: st.h.te, st: st.s.tr, ss: st.s.te };
+  const ly = (v) => f.py(Math.max(lo, Math.min(hi, Math.log10(v))));
+  const stride = Math.max(1, Math.ceil(E / 600)), ends = [];
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  for (const [key, h] of Object.entries(series)) {
+    const pts = [];
+    for (let k = 0; k < h.length; k += stride) pts.push([f.px(k), ly(h[k])]);
+    pts.push([f.px(h.length - 1), ly(h[h.length - 1])]);
+    polyline(ctx, pts, css(looks[key].col), looks[key].w, looks[key].dash);
+  }
+  ctx.restore();
+  for (const [key, h] of Object.entries(series)) ends.push({ text: looks[key].text, y: ly(h[h.length - 1]), look: looks[key], strong: key[0] === "h" });
+  endLabels(ctx, f, ends);
+}
+
+function score() {
+  const T = Tval(), lam = lamVal();
+  const row = (name, pred, dec) => `<tr><td>${name}</td><td>${num(accOf(pred, d.Xtr, d.ytr))}</td><td>${num(accOf(pred, d.Xte, d.yte))}</td><td>${num(ceOf(dec, d.Xte, d.yte))}</td></tr>`;
+  const decOf = (net) => (x) => mlpLogit(net, x);
+  $("table").innerHTML = `<table><tr><th></th><th>верно, обуч.</th><th>верно, тест</th><th>CE, тест</th></tr>` +
+    row("учитель", teaPred, tdec) + row("ученик, жёсткие", netPred(st.h.net), decOf(st.h.net)) + row("ученик, мягкие", netPred(st.s.net), decOf(st.s.net)) + `</table>`;
+  const nte = d.Xte.length;
+  const diff = Math.round((accOf(netPred(st.s.net), d.Xte, d.yte) - accOf(netPred(st.h.net), d.Xte, d.yte)) * nte);
+  // The objective of the soft student: its minimum is not zero but (1 - λ) T² mean H(p), so the part above that floor is shown too.
+  const opts = optsOf("s"), L = mlpDistillLoss(st.s.net, d.Xtr, d.ytr, U, opts);
+  const Hp = U.reduce((s, u) => s + entropy([1 - sig(u / T), sig(u / T)]), 0) / U.length, floor = (1 - lam) * T * T * Hp;
+  $("score").innerHTML =
+    `<span>Эпоха, жёсткий</span><span>${st.h.epoch}/${E}</span>` +
+    `<span>Эпоха, мягкий</span><span>${st.s.epoch}/${E}</span>` +
+    `<span>Тест, мягк.−жёст.</span><span>${diff > 0 ? "+" : ""}${diff} из ${nte}</span>` +
+    `<span>Цель L ученика</span><span>${num(L)}</span>` +
+    `<span>(1 − λ)·T²·H̄(p)</span><span>${num(floor)}</span>` +
+    `<span>L за вычетом</span><span>${num(L - floor)}</span>`;
+  const caps = {
+    ct: `<b>Учитель</b>: ${teacher.trees.length} деревьев, глубина ${$("depth").value}. Верно на тесте ${num(accOf(teaPred, d.Xte, d.yte))}`,
+    ch: `<b>Ученик на жёстких метках</b> (λ = 1). Верно на тесте ${num(accOf(netPred(st.h.net), d.Xte, d.yte))}`,
+    cs: `<b>Ученик на мягких метках</b>, T = ${num(T, 3)}, λ = ${num(lam, 2)}. Верно на тесте ${num(accOf(netPred(st.s.net), d.Xte, d.yte))}`,
+  };
+  for (const [id, html] of Object.entries(caps)) $(id).innerHTML = html;
+  showProbe();
+}
+
+function showProbe() {
+  if (!probe) { $("info").innerHTML = `<p class="note">Щёлкните по зоне: покажу логит учителя, его мягкую метку при текущем T и ответы обоих учеников в этой точке</p>`; return; }
+  const T = Tval(), u = tdec(probe), pt = sig(u / T);
+  $("info").innerHTML = `<p class="note">Точка (${num(probe[0], 2)}; ${num(probe[1], 2)})</p><table class="compact">` +
+    `<tr><td>логит учителя u</td><td>${num(u)}</td></tr>` +
+    `<tr><td>P(y=1) учителя, T = 1</td><td>${num(sig(u), 3)}</td></tr>` +
+    `<tr><td>мягкая метка p, T = ${num(T, 3)}</td><td>${num(pt, 3)}</td></tr>` +
+    `<tr><td>P(y=1) жёсткого ученика</td><td>${num(sig(mlpLogit(st.h.net, probe)), 3)}</td></tr>` +
+    `<tr><td>P(y=1) мягкого ученика</td><td>${num(sig(mlpLogit(st.s.net, probe)), 3)}</td></tr></table>`;
+}
+
+function labels() { $("nv").textContent = $("trees").value; $("hv").textContent = $("hidden").value; $("Tv").textContent = num(Tval(), 3); $("lv").textContent = num(lamVal(), 2); }
+
+// ---------- controls ----------
+
+const fullReset = () => { fitTeacher(); drawTeacher(); restart("both"); };
+for (const id of ["data", "trees", "depth", "hidden", "seed"]) $(id).addEventListener("input", () => { labels(); fullReset(); });
+for (const id of ["T", "lam"]) $(id).addEventListener("input", () => { labels(); restart("soft"); });
+$("reset").addEventListener("click", fullReset);
+for (const k of ["t", "h", "s"]) zc[k].addEventListener("pointerdown", (e) => {
+  probe = view.toX(...canvasXY(zc[k], e));
+  drawTeacher(); drawStudents();
+});
+
+$("honest").innerHTML = [
+  "Выигрыша от мягких меток на этих данных ждать не нужно, страница его не обещает. Учитель обучен на тех же объектах, что и ученик, и нового, чего нет в жёстких метках, знает мало: на обучающих точках он обычно прав, и его метки при T = 1 близки к жёстким",
+  `Оба ученика стартуют с одних весов и учатся ровно ${E} эпох полным градиентным спуском с шагом η = ${LR}`,
+  "Тест здесь итог, а не выбор: T, λ, размер ученика и учителя по нему не подбираются, значения по умолчанию взяты для иллюстрации, а разница в один-два объекта теста — шум. Подбирать их надо кросс-валидацией на обучающей части, как в заметке",
+  `Зоны рисуются на сетке ${ZN} × ${ZN}, граница ступенчатая`,
+].map((t) => `<p class="note">${t}</p>`).join("");
+onTheme(() => { drawTeacher(); if (st.h) drawStudents(); });
+labels();
+fitTeacher();
+newStudent("h"); newStudent("s");
+drawTeacher(); drawStudents();
+restart("both");
+</script>
+</body>
+</html>

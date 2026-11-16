@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница градиентного бустинга</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+canvas#fit { cursor: grab; }
+canvas#fit.drag { cursor: grabbing; }
+.legend i.ring { width: 11px; height: 11px; border-radius: 50%; background: none; border: 2px solid var(--mark); vertical-align: middle; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница градиентного бустинга</h1>
+  <p class="lead">Бустинг регрессионных деревьев, как GradientBoostingRegressor в sklearn. Старт — среднее (для MSE) или медиана; каждое следующее дерево учится на антиградиенте выбранной потери по текущим предсказаниям и добавляется с шагом η. Перетащите выбросы и сравните потери</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="fit" width="640" height="340" aria-label="Ансамбль и данные"></canvas>
+      <canvas id="res" width="640" height="200" aria-label="Антиградиент для следующего дерева"></canvas>
+      <canvas id="curve" width="640" height="220" aria-label="Ошибка по итерациям"></canvas>
+    </div>
+    <div class="panel">
+      <label>Потеря
+        <select id="loss">
+          <option value="squared_error">MSE: ½(y − f)²</option>
+          <option value="absolute_error">MAE: |y − f|</option>
+          <option value="huber">Хьюбер</option>
+        </select>
+      </label>
+      <label>Квантиль δ для Хьюбера α = <b id="av"></b>
+        <input id="alpha" type="range" min="0.5" max="0.95" step="0.05" value="0.9">
+      </label>
+      <label>Выбросов (перетаскиваются): <b id="nv"></b>
+        <input id="nout" type="range" min="0" value="2">
+      </label>
+      <label>Деревьев в ансамбле m: <b id="mv"></b>
+        <input id="m" type="range" min="0" max="300" value="30">
+      </label>
+      <label>Шаг η = <b id="lrv"></b>
+        <input id="lr" type="range" min="0.01" max="1" step="0.01" value="0.3">
+      </label>
+      <label>Глубина дерева: <b id="dv"></b>
+        <input id="depth" type="range" min="1" max="6" value="2">
+      </label>
+      <label>Метрика на кривой
+        <select id="metric">
+          <option value="mse">MSE</option>
+          <option value="mae">MAE</option>
+        </select>
+      </label>
+      <div class="score" id="score"></div>
+      <div class="legend"><span><i style="background:var(--model)"></i>ансамбль после m деревьев</span><span><i style="background:var(--model-2)"></i>вклад m-го дерева × η</span><span><i style="background:var(--train)"></i>train</span><span><i style="background:var(--test)"></i>test</span><span><i style="background:var(--text-2)"></i>sin 2πx</span><span><i class="ring"></i>выброс (входит в train)</span></div>
+      <p class="note">Средний график — то, на чём учится следующее дерево: остаток y − f для MSE, его знак для MAE, остаток, обрезанный на ±δ, для Хьюбера, где δ — α-квантиль |y − f| перед каждым деревом</p>
+      <p class="note">Для MAE и Хьюбера sklearn после подгонки дерева пересчитывает значения в листьях: медиана остатков листа, для Хьюбера ещё плюс среднее обрезанных на ±δ отклонений от неё; страница делает так же</p>
+      <p class="note">Лист из одной точки, например из выброса, получает её остаток целиком, и тогда выброс сдвигает ансамбль даже при MAE и Хьюбере. Test — чистые точки без выбросов, train включает выбросы</p>
+      <p class="note">Малый шаг η требует больше деревьев, но ошибка на тесте падает плавнее. Большой шаг и глубокие деревья подгоняют шум: обучение уходит в ноль, тест растёт</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const d = DATA.reg1d;
+// Starting places of the draggable outliers: far above or below the sine.
+const OUTLIERS = [[0.22, 2.9], [0.74, -2.9], [0.5, 2]];
+const Y_LIM = 3.5, HIT = 18;
+const outliers = OUTLIERS.map((p) => p.slice());
+$("nout").max = outliers.length;
+let fitted = null, key = "", dragging = -1;
+
+const active = () => outliers.slice(0, +$("nout").value);
+
+function ensure() {
+  const loss = $("loss").value, alpha = +$("alpha").value, lr = +$("lr").value, depth = +$("depth").value;
+  const out = active(), k = JSON.stringify([loss, alpha, lr, depth, out]);
+  if (k === key) return fitted;
+  const X = d.Xtr.concat(out.map((p) => [p[0]])), y = d.ytr.concat(out.map((p) => p[1]));
+  const model = fitBoosting(X, y, { nEstimators: 300, lr, maxDepth: depth, loss, alpha });
+  const tr = boostingStaged(model, X), te = boostingStaged(model, d.Xte);
+  const mean = (P, t, f) => P.map((row) => row.reduce((s, v, i) => s + f(v - t[i]), 0) / row.length);
+  fitted = {
+    model, X, y, tr,
+    curves: {
+      mse: { train: mean(tr, y, (r) => r * r), test: mean(te, d.yte, (r) => r * r) },
+      mae: { train: mean(tr, y, Math.abs), test: mean(te, d.yte, Math.abs) },
+    },
+  };
+  key = k;
+  return fitted;
+}
+
+function draw() {
+  const { model, X, y, tr, curves } = ensure();
+  const m = +$("m").value, loss = $("loss").value, alpha = +$("alpha").value;
+  $("alpha").disabled = loss !== "huber";
+  $("nv").textContent = $("nout").value; $("av").textContent = toComma(alpha, 2);
+  $("mv").textContent = m; $("lrv").textContent = toComma(+$("lr").value, 2); $("dv").textContent = $("depth").value;
+  const xs = Array.from({ length: 400 }, (_, i) => -0.02 + (1.04 * i) / 399);
+  const nOut = +$("nout").value, nClean = d.Xtr.length;
+
+  const cv = $("fit"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.02, 1.02], [-Y_LIM, Y_LIM]);
+  axes(ctx, f, { xticks: [0, 0.5, 1], yticks: [-3, -2, -1, 0, 1, 2, 3], fmt: (t) => toComma(t, null), xlabel: "x", ylabel: "y" });
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(Math.sin(2 * Math.PI * x))]), css("--text-2"), 1.5, [5, 4]);
+  d.Xte.forEach((x, i) => dot(ctx, f.px(x[0]), f.py(d.yte[i]), css("--test"), { hollow: true }));
+  X.forEach((x, i) => {
+    dot(ctx, f.px(x[0]), f.py(y[i]), css("--train"));
+    if (i >= nClean) {
+      ctx.save(); ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(f.px(x[0]), f.py(y[i]), 9, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
+    }
+  });
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(boostingPredict(model, [x], m))]), css("--model"), 2.5);
+  if (m > 0) polyline(ctx, xs.map((x) => [f.px(x), f.py(model.lr * regTreePredict(model.trees[m - 1], [x]))]), css("--model-2"), 1.5);
+  ctx.restore();
+
+  // The antigradient the next tree (number m + 1) is fitted on.
+  const rv = $("res"), rx = rv.getContext("2d");
+  rx.clearRect(0, 0, rv.width, rv.height);
+  const resid = y.map((v, i) => v - tr[m][i]);
+  const g = antigradient(loss, resid, alpha);
+  const delta = loss === "huber" ? huberDelta(resid, alpha) : null;
+  const gmax = Math.max(0.2, ...g.map(Math.abs));
+  const gf = frame(rv, [-0.02, 1.02], [-gmax, gmax], { margin: [52, 28, 14, 30] });
+  const what = { squared_error: "остаток y − f", absolute_error: "знак остатка", huber: "остаток, обрезанный на ±δ" }[loss];
+  axes(rx, gf, { xticks: [0, 0.5, 1], yticks: [-gmax, 0, gmax], xfmt: (t) => toComma(t, null), yfmt: num, ylabel: `антиградиент для дерева ${m + 1}: ${what}` });
+  polyline(rx, [[gf.px(-0.02), gf.py(0)], [gf.px(1.02), gf.py(0)]], css("--text-2"), 1);
+  X.forEach((x, i) => {
+    rx.strokeStyle = css("--train"); rx.lineWidth = 1.5;
+    rx.beginPath(); rx.moveTo(gf.px(x[0]), gf.py(0)); rx.lineTo(gf.px(x[0]), gf.py(g[i])); rx.stroke();
+    dot(rx, gf.px(x[0]), gf.py(g[i]), css("--train"), { r: 3 });
+    if (i >= nClean) {
+      rx.save(); rx.strokeStyle = css("--mark"); rx.lineWidth = 2;
+      rx.beginPath(); rx.arc(gf.px(x[0]), gf.py(g[i]), 7, 0, 2 * Math.PI); rx.stroke(); rx.restore();
+    }
+  });
+
+  const metric = $("metric").value, cur = curves[metric];
+  const cc = $("curve"), cx = cc.getContext("2d");
+  cx.clearRect(0, 0, cc.width, cc.height);
+  const steps = Array.from({ length: model.trees.length + 1 }, (_, k) => k);
+  // The lower limit follows the data down to the power of ten below the
+  // smallest error; below 1e-9 the curve is cut and the page says so.
+  const floorLog = Math.floor(Math.log10(Math.min(...cur.train, ...cur.test)));
+  const cut = floorLog < -9;
+  const lo = Math.max(floorLog, -9), hi = Math.ceil(Math.log10(Math.max(...cur.train, ...cur.test)));
+  const h = frame(cc, [0, 300], [lo, hi], { margin: [52, 28, 14, 44] });
+  axes(cx, h, { xticks: [0, 100, 200, 300], yticks: logTicks(lo, hi), xlabel: "число деревьев", ylabel: `${metric.toUpperCase()}, лог. шкала` + (cut ? " (кривая обрезана снизу)" : ""), yfmt: (t) => num(10 ** t) });
+  const ly = (v) => h.py(Math.max(lo, Math.min(hi, Math.log10(v))));
+  polyline(cx, steps.map((k) => [h.px(k), ly(cur.train[k])]), css("--train"), 2);
+  polyline(cx, steps.map((k) => [h.px(k), ly(cur.test[k])]), css("--test"), 2);
+  cx.strokeStyle = css("--mark"); cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(h.px(m), h.mt); cx.lineTo(h.px(m), h.mt + h.H); cx.stroke(); cx.setLineDash([]);
+
+  $("score").innerHTML =
+    `<span>MSE train</span><span>${num(curves.mse.train[m])}</span>` +
+    `<span>MSE test</span><span>${num(curves.mse.test[m])}</span>` +
+    `<span>MAE train</span><span>${num(curves.mae.train[m])}</span>` +
+    `<span>MAE test</span><span>${num(curves.mae.test[m])}</span>` +
+    (delta === null ? "" : `<span>δ для дерева ${m + 1}</span><span>${num(delta)}</span>`);
+}
+
+// Dragging an outlier: the pointer sets its x and y in data units.
+function pick(e) {
+  const cv = $("fit"), [mx, my] = canvasXY(cv, e), f = frame(cv, [-0.02, 1.02], [-Y_LIM, Y_LIM]);
+  let best = -1, bd = HIT;
+  active().forEach((p, i) => {
+    const dist = Math.hypot(f.px(p[0]) - mx, f.py(p[1]) - my);
+    if (dist < bd) { bd = dist; best = i; }
+  });
+  return best;
+}
+const fitCv = $("fit");
+fitCv.addEventListener("pointerdown", (e) => {
+  dragging = pick(e);
+  if (dragging >= 0) { fitCv.setPointerCapture(e.pointerId); fitCv.classList.add("drag"); }
+});
+fitCv.addEventListener("pointermove", (e) => {
+  if (dragging < 0) { fitCv.style.cursor = pick(e) >= 0 ? "grab" : "default"; return; }
+  const [mx, my] = canvasXY(fitCv, e), f = frame(fitCv, [-0.02, 1.02], [-Y_LIM, Y_LIM]);
+  outliers[dragging] = [Math.max(0, Math.min(1, f.dx(mx))), Math.max(-Y_LIM + 0.1, Math.min(Y_LIM - 0.1, f.dy(my)))];
+  draw();
+});
+const release = () => { dragging = -1; fitCv.classList.remove("drag"); };
+fitCv.addEventListener("pointerup", release);
+fitCv.addEventListener("pointercancel", release);
+
+["m", "lr", "depth", "loss", "alpha", "nout", "metric"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

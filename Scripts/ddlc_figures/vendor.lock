@@ -1,0 +1,77 @@
+{
+  "_comment": "Files vendored from the owner's theme repositories at pinned commits. fetch_vendor.py downloads each into this folder and checks its sha256. Every ddlc-themes file is at one commit.",
+  "files": [
+    {
+      "repo": "rokokol/ddlc-palette",
+      "commit": "a85f5ae3ac02cdfdd40a82d77040fe9660921f0b",
+      "path": "dist/palette.css",
+      "sha256": "fe95e2c59dc16a32702be384a192c705a48240ae64a3fa9e98bfa1b4b1802d20"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/ddlc-report.css",
+      "sha256": "5257f3d3fa71207bfcd4922836847759c64265ecbd8c720ed16754ed83913fd1"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/ddlc.mplstyle",
+      "sha256": "aa2b96520279f268361102ace2500fa25aabb7177da314af81f3f955a4c5d7a8"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/ddlc_cmaps.py",
+      "sha256": "58d3151f820df604bca502c34daac74ae7ba5f6ebbddab9df2b72bb78df69347"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunito.woff2",
+      "sha256": "bbf7f9a5af67fe5d423c015fc1f48ad040cd48514e9c4e3b3fe17df82340d1e7"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunitoStatic-Medium.ttf",
+      "sha256": "fae0694638f8fa62fc5bb2357d108f8046866ff427f7e5c093454cc734c6f2b3"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunitoStatic-MediumItalic.ttf",
+      "sha256": "2f9218329fde28ce63e132349251ccf78ca350db4b9519ebefd76cb620fb8a29"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunitoStatic-Black.ttf",
+      "sha256": "a0f717a9a392ead15b0bbdaf8de7a0e204f7dc28b4afcb759c7a74b24e06be73"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunitoStatic-BlackItalic.ttf",
+      "sha256": "754282e1265ed9ff330c17a5e1c43625c596508607bed58475cb28b86e23e3e2"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/MyaNunito-LICENSE.txt",
+      "sha256": "c548014e7887e5d1317e930a0ac638bc52a4edb21c77e6eb6cdb632ab19ee27f"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/DepartureMono-Regular.woff2",
+      "sha256": "5b4fed1daa90708aa9c6ee1190abca9dc22164a1c1def0020386e46b61038cfb"
+    },
+    {
+      "repo": "rokokol/ddlc-themes",
+      "commit": "9a6363053eb2db47dd93fcfd5722354b22678821",
+      "path": "dist/DepartureMono-LICENSE.txt",
+      "sha256": "b65e42750f3cb65437a97f4dfd781c58f199259949db2341012be60e32500e83"
+    }
+  ]
+}

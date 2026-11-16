@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница спектральных задач</title>
+<style>
+/*COMMON_CSS*/
+.panel input[type=text] { font-size: 13px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mtab td, .mtab th { white-space: nowrap; }
+.agrid { display: grid; gap: 4px; }
+.agrid input { text-align: right; padding: 4px 3px; font-size: 13px; min-width: 0; }
+.sw { display: inline-block; width: 18px; height: 0; border-top: 3px solid currentColor; vertical-align: middle; margin-right: 5px; }
+.sw.dash { border-top-style: dashed; }
+.stale { opacity: 0.4; }
+.refline { color: var(--text-2); font-size: 13px; margin: 0; }
+.cell-hit { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--panel); }
+.mtab.sm { width: auto; }
+.main .mtab.sm td { text-align: right; padding: 3px 12px; }
+.sub { margin: 14px 0 0; font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница спектральных задач</h1>
+  <p class="lead">Для симметричного ядра K(x,s) на отрезке [a; b] страница считает характеристические числа λ по квадратурам и сравнивает с ними метод Келлога, метод следов и метод Ритца. Ниже отдельный блок: метод вращений Якоби для вещественной симметричной матрицы до 5×5</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Готовое ядро</h2>
+        <select id="preset" aria-label="Готовое ядро"></select>
+      </div>
+      <div class="sec">
+        <h2>Ядро</h2>
+        <div class="two"><label>a<input id="lo" type="text" inputmode="decimal"></label><label>b<input id="hi" type="text" inputmode="decimal"></label></div>
+        <label>K(x, s)<input id="kernel" type="text"></label>
+        <p class="note">Формулы: числа, x и s, pi и e, знаки + − * / ^, скобки, функции sin cos exp log sqrt abs. Минимум и максимум пишутся через abs: min(x,s) = (x+s−abs(x−s))/2</p>
+        <p class="err" id="err" role="status"></p>
+      </div>
+      <div class="sec">
+        <h2>Метод Келлога</h2>
+        <label>Начальная функция ω(x)<input id="omega" type="text"></label>
+        <label>Число шагов<select id="ksteps"><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
+      </div>
+      <div class="sec">
+        <h2>Метод следов</h2>
+        <label>Наибольшее m<select id="tm"><option>3</option><option selected>6</option><option>8</option><option>10</option></select></label>
+      </div>
+      <div class="sec">
+        <h2>Метод Ритца</h2>
+        <label>Базис<select id="rbasis"><option value="legendre">Лежандр</option><option value="chebyshev">Чебышёв</option><option value="monomial">1, x, x², …</option></select></label>
+        <label>Наибольшее n<select id="rn"><option>4</option><option>6</option><option selected>8</option><option>10</option><option>12</option></select></label>
+      </div>
+      <div class="sec">
+        <h2>Матрица для метода вращений</h2>
+        <select id="mpreset" aria-label="Готовая матрица"></select>
+        <label>Порядок n<select id="msize"><option>2</option><option>3</option><option selected>4</option><option>5</option></select></label>
+        <div class="agrid" id="mgrid"></div>
+        <p class="note">Правишь элемент выше диагонали или на ней, симметричный подставится сам</p>
+        <p class="err" id="merr" role="status"></p>
+      </div>
+    </div>
+    <div class="main">
+      <p class="warn" id="stale" role="status" hidden>Ввод с ошибкой: показаны прежние значения</p>
+      <div class="main" id="results">
+        <section>
+          <h2>Сходимость к λ₁</h2>
+          <p class="warn" id="warn" role="status"></p>
+          <canvas id="convChart" class="wide" role="img" aria-label="Погрешность приближений наименьшего характеристического числа по номеру шага, логарифмическая шкала"></canvas>
+          <div class="legend" id="convLegend"></div>
+          <p class="refline" id="refline"></p>
+        </section>
+        <section>
+          <h2>Характеристические числа ядра</h2>
+          <div class="scroll"><table class="mtab" id="lamTable"></table></div>
+          <canvas id="eigChart" class="wide" role="img" aria-label="Собственные функции ядра"></canvas>
+          <div class="legend"><span><i style="background:var(--c0)"></i>y₁</span><span><i style="background:var(--c1)"></i>y₂</span><span><i style="background:var(--c2)"></i>y₃</span></div>
+        </section>
+        <section>
+          <h2>Метод Келлога</h2>
+          <div class="scroll"><table class="mtab" id="kTable"></table></div>
+          <label>Шаг n функции ω<sub>n</sub> на графике: <b id="kNval"></b><input id="kn" type="range" min="0" max="8" step="1" value="0"></label>
+          <canvas id="kChart" class="wide" role="img" aria-label="Нормированная функция омега n и первая собственная функция"></canvas>
+          <p class="refline" id="kLine"></p>
+        </section>
+        <section>
+          <h2>Метод следов</h2>
+          <div class="scroll"><table class="mtab" id="tTable"></table></div>
+          <canvas id="tChart" class="wide" role="img" aria-label="Границы наименьшего характеристического числа по m"></canvas>
+          <div class="legend"><span style="color:var(--c0)"><i class="sw"></i>сверху</span><span style="color:var(--c0)"><i class="sw dash"></i>снизу</span><span style="color:var(--text-2)"><i class="sw dash"></i>λ₁</span></div>
+        </section>
+        <section>
+          <h2>Метод Ритца</h2>
+          <div class="scroll"><table class="mtab" id="rTable"></table></div>
+          <label>Приближение n для графика функции: <b id="rNval"></b><input id="rnpick" type="range" min="1" max="8" step="1" value="3"></label>
+          <canvas id="rChart" class="wide" role="img" aria-label="Приближённая и точная первая собственная функция"></canvas>
+          <p class="refline" id="rLine"></p>
+        </section>
+        <section id="jsec">
+          <h2>Метод вращений Якоби</h2>
+          <p class="warn" id="jwarn" role="status"></p>
+          <label>Матрица A<sub>p</sub> после p вращений: <b id="jpval"></b><input id="jp" type="range" min="0" max="0" step="1" value="0"></label>
+          <div style="overflow-x:auto" id="jmat"></div>
+          <p class="refline" id="jinfo"></p>
+          <canvas id="jChart" class="wide" role="img" aria-label="Сумма квадратов внедиагональных элементов по числу вращений, логарифмическая шкала"></canvas>
+          <div class="legend"><span><i style="background:var(--c3)"></i>S(A<sub>p</sub>)</span><span><i style="background:var(--text-2)"></i>ρ<sup>p</sup>S(A₀)</span></div>
+          <div class="scroll"><table class="mtab" id="jTable"></table></div>
+          <p class="note" id="jeig"></p>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*CHART*/
+/*NMCORE*/
+/*PRESETS*/
+const num = (x) => sciText(x);
+const STYLE = {
+  kr: { role: "--c1", cls: "", width: 2.2, name: "Келлог, отношение норм" },
+  kroot: { role: "--c1", cls: "dash", width: 2, dash: [7, 4], name: "Келлог, корень" },
+  tu: { role: "--c0", cls: "", width: 2.2, name: "следы, сверху" },
+  tl: { role: "--c0", cls: "dash", width: 2, dash: [7, 4], name: "следы, снизу" },
+  rz: { role: "--c2", cls: "", width: 2.2, name: "Ритц" },
+};
+const KERNEL_PRESETS = PRESETS.filter((q) => q.type === "kernel"), MATRIX_PRESETS = PRESETS.filter((q) => q.type === "matrix");
+let timer = 0, lastKey = "", ref = null;
+let CURRENT_EXACT = [];  // the exact characteristic numbers of a preset, until the kernel is edited
+const schedule = () => { clearTimeout(timer); timer = setTimeout(update, 150); };
+
+function markStale(on) { $("stale").hidden = !on; $("results").classList.toggle("stale", on); }
+function showError(e) { $("err").textContent = e instanceof ExprError ? describe(e) : (e.place ? `${e.place}: ${e.message}` : e.message); }
+
+function readConst(id, what) {
+  const el = $(id);
+  try { const v = evalConstant(el.value); el.removeAttribute("aria-invalid"); return v; } catch (e) { el.setAttribute("aria-invalid", "true"); e.place = what; throw e; }
+}
+
+const swatch = (id) => `<span style="color:var(${STYLE[id].role})"><i class="sw ${STYLE[id].cls}"></i>${STYLE[id].name}</span>`;
+
+// ---- the kernel part
+
+function update() {
+  let k, omega, ex = null;
+  try {
+    document.querySelectorAll(".panel input").forEach((el) => el.removeAttribute("aria-invalid"));
+    const lo = readConst("lo", "Отрезок, a"), hi = readConst("hi", "Отрезок, b");
+    try { k = makeKernel({ lo, hi, kernel: $("kernel").value }); } catch (e) {
+      if (e.field === "kernel") { $("kernel").setAttribute("aria-invalid", "true"); e.place = "Ядро"; } else if (e.field === "interval") $("lo").setAttribute("aria-invalid", "true");
+      throw e;
+    }
+    try { omega = compileExpression($("omega").value, ["x"]); } catch (e) { $("omega").setAttribute("aria-invalid", "true"); e.place = "Начальная функция ω"; throw e; }
+    const d = symmetryDefect(k);
+    if (d > 1e-9) throw new Error("Ядро не симметрично: K(x, s) ≠ K(s, x). Страница считает симметричные ядра");
+    $("err").textContent = "";
+    ex = CURRENT_EXACT.length ? CURRENT_EXACT : null;
+  } catch (e) {
+    showError(e);
+    markStale(true);
+    return;
+  }
+  markStale(false);
+  const key = JSON.stringify([$("lo").value, $("hi").value, $("kernel").value]);
+  if (key !== lastKey) {
+    try { ref = characteristicNumbers(k, 6); lastKey = key; } catch (e) {
+      lastKey = ""; ref = null;
+      $("err").textContent = `Эталон не построен: ${describe(e)}`;
+      markStale(true);
+      return;
+    }
+  }
+  if (!ref.lambda.length) { $("warn").textContent = "У ядра нет ненулевых характеристических чисел"; return; }
+  const warnings = [];
+  const lamList = ex || ref.lambda;
+  const lam1 = Math.abs(lamList[0]);
+  if (ref.lambda.some((l) => l < 0)) warnings.push("У ядра есть отрицательные μ: метод Келлога сходится к наименьшему по модулю |λ|, а ω_n меняет знак на шагах");
+  const K = +$("ksteps").value, M = +$("tm").value, NR = +$("rn").value;
+  let kel = null, tr = null, rz = null;
+  try { kel = kellogg(k, (x) => omega(x), K); } catch (e) { warnings.push(`Келлог: ${describe(e)}`); }
+  try { tr = traces(k, M); } catch (e) { warnings.push(`Следы: ${describe(e)}`); }
+  let rzSolutions = [];
+  try {
+    const series = ritzSeries(k, NR, basisFunctions($("rbasis").value, NR, k.lo, k.hi));
+    for (let n = 1; n <= NR; n++) rzSolutions.push(series.solution(n));
+    rz = series;
+  } catch (e) { warnings.push(`Ритц: ${describe(e)}`); rzSolutions = []; }
+  $("warn").textContent = warnings.join(". ");
+  $("refline").innerHTML = (ex ? "Эталон: точные значения из пресета" : ref.err[0] < 1e-12 * lam1 ? "Эталон: квадратуры, сошлись до 10<sup>−12</sup>"
+    : `Эталон: квадратуры с экстраполяцией по шагу, оценка погрешности λ₁ ${sciHtml(ref.err[0])}`)
+    + `. У ядра с изломом сами методы Келлога и следов считаются на 256 узлах, их погрешность порядка 10<sup>−5</sup>`;
+  drawConvergence(lam1, kel, tr, rzSolutions);
+  fillLambda(k, ex);
+  fillKellogg(k, kel, lam1);
+  fillTraces(tr, lam1);
+  fillRitz(k, rzSolutions, lamList);
+}
+
+
+// ---- convergence of everything to lambda_1
+
+function drawConvergence(lam1, kel, tr, rzs) {
+  const series = [], tags = [];
+  const push = (id, xs, ys) => {
+    const e = ys.map((v) => Math.abs(v - lam1));
+    series.push({ xs, ys: e.map((v) => (v > 0 ? v : NaN)), color: css(STYLE[id].role), width: STYLE[id].width, dash: STYLE[id].dash, dots: 2.5 });
+    tags.push(id);
+  };
+  if (kel) { push("kr", kel.ratios.map((_, i) => i + 1), kel.ratios); push("kroot", kel.roots.map((_, i) => i + 1), kel.roots); }
+  if (tr) { push("tu", tr.upper.map((_, i) => i + 1), tr.upper); push("tl", tr.lower.map((_, i) => i + 1), tr.lower); }
+  if (rzs.length) push("rz", rzs.map((s) => s.n), rzs.map((s) => nearestTo(s.lambda, lam1)));
+  const cv = $("convChart");
+  if (!series.length) { cv.hidden = true; return; }
+  cv.hidden = false;
+  const [lo, hi] = logRange(series.map((s) => s.ys));
+  const xs = series.flatMap((s) => s.xs);
+  plotLines(cv, { series, xlim: [1, Math.max(...xs, 2)], ylim: [Math.max(lo, 1e-16), hi], ylog: true });
+  $("convLegend").innerHTML = tags.map(swatch).join("");
+}
+
+// the approximate number of smallest modulus: a Ritz basis too small may lack the first one
+function nearestTo(list, target) {
+  return list.reduce((b, v) => (Math.abs(Math.abs(v) - target) < Math.abs(Math.abs(b) - target) ? v : b), list[0] ?? NaN);
+}
+
+// ---- the characteristic numbers
+
+function fillLambda(k, ex) {
+  const head = `<thead><tr><th>k</th><th>λ<sub>k</sub> по квадратурам</th><th>μ<sub>k</sub> = 1/λ<sub>k</sub></th><th>разброс по сеткам</th>${ex ? "<th>точное</th>" : ""}</tr></thead>`;
+  const body = ref.lambda.map((l, j) => `<tr><td>${j + 1}</td><td>${sciHtml(l)}</td><td>${sciHtml(ref.mu[j])}</td><td>${sciHtml(ref.err[j])}</td>${ex ? `<td>${j < ex.length ? sciHtml(ex[j]) : "—"}</td>` : ""}</tr>`).join("");
+  $("lamTable").innerHTML = head + `<tbody>${body}</tbody>`;
+  const xs = Array.from({ length: 241 }, (_, i) => k.lo + (i + 0.5) / 241 * (k.hi - k.lo));
+  const series = [0, 1, 2].filter((j) => j < ref.lambda.length).map((j) => { const f = ref.eigenfunction(j); return { xs, ys: xs.map(f), color: css(["--c0", "--c1", "--c2"][j]), width: 2 }; });
+  plotLines($("eigChart"), { series, xlim: [k.lo, k.hi], ylim: yRange(series.map((s) => s.ys)) });
+}
+
+// ---- Kellogg
+
+function fillKellogg(k, kel, lam1) {
+  const kn = $("kn");
+  if (!kel) { $("kTable").innerHTML = ""; $("kChart").hidden = true; return; }
+  kn.max = kel.ratios.length;
+  if (+kn.value > +kn.max) kn.value = kn.max;
+  const head = "<thead><tr><th>n</th><th>‖ω<sub>n−1</sub>‖/‖ω<sub>n</sub>‖</th><th>1/‖ω<sub>n</sub>‖<sup>1/n</sup></th><th>отношение − λ₁</th></tr></thead>";
+  const body = kel.ratios.map((r, i) => `<tr><td>${i + 1}</td><td>${sciHtml(r)}</td><td>${sciHtml(kel.roots[i])}</td><td>${sciHtml(r - lam1)}</td></tr>`).join("");
+  $("kTable").innerHTML = head + `<tbody>${body}</tbody>`;
+  const n = +kn.value;
+  $("kNval").textContent = n;
+  const y1 = ref.eigenfunction(0), yv = Array.from(kel.x, y1), v = kel.vectors[n];
+  let dot = 0, dot0 = 0;
+  for (let i = 0; i < v.length; i++) { dot += kel.w[i] * v[i] * yv[i]; dot0 += kel.w[i] * kel.vectors[0][i] * yv[i]; }
+  const sign = dot < 0 ? -1 : 1;
+  const series = [{ xs: Array.from(kel.x), ys: yv, color: css("--text-2"), width: 3 }, { xs: Array.from(kel.x), ys: Array.from(v, (c) => sign * c), color: css("--c1"), width: 1.8 }];
+  plotLines($("kChart"), { series, xlim: [k.lo, k.hi], ylim: yRange(series.map((s) => s.ys)) });
+  const q = ref.lambda.length > 1 ? (Math.abs(ref.lambda[0]) / Math.abs(ref.lambda[1])) ** 2 : 0;
+  $("kLine").innerHTML = `Косинус угла между ω и y₁ равен ${num(Math.abs(dot0))}, между ω<sub>${n}</sub> и y₁ — ${num(Math.abs(dot))}. Ошибка убывает на шаг примерно в (λ₁/λ₂)² = ${num(q)} раз`;
+}
+
+// ---- traces
+
+function fillTraces(tr, lam1) {
+  const cv = $("tChart");
+  if (!tr) { $("tTable").innerHTML = ""; cv.hidden = true; return; }
+  const M = tr.lower.length;
+  const head = "<thead><tr><th>m</th><th>A<sub>2m</sub></th><th>снизу A<sub>2m</sub><sup>−1/(2m)</sup></th><th>сверху √(A<sub>2m</sub>/A<sub>2m+2</sub>)</th><th>λ₁ − снизу</th><th>сверху − λ₁</th></tr></thead>";
+  const body = Array.from({ length: M }, (_, i) => `<tr><td>${i + 1}</td><td>${sciHtml(tr.a[i])}</td><td>${sciHtml(tr.lower[i])}</td><td>${sciHtml(tr.upper[i])}</td><td>${sciHtml(lam1 - tr.lower[i])}</td><td>${sciHtml(tr.upper[i] - lam1)}</td></tr>`).join("");
+  $("tTable").innerHTML = head + `<tbody>${body}</tbody>`;
+  cv.hidden = false;
+  const ms = Array.from({ length: M }, (_, i) => i + 1);
+  const top = Math.max(...tr.upper), bot = Math.min(...tr.lower);
+  plotLines(cv, {
+    series: [{ xs: ms, ys: tr.upper, color: css("--c0"), width: 2.2, dots: 2.5 }, { xs: ms, ys: tr.lower, color: css("--c0"), width: 2, dash: [7, 4], dots: 2.5 }, { xs: [1, M + 0.0001], ys: [lam1, lam1], color: css("--text-2"), width: 1, dash: [3, 3] }],
+    xlim: [1, Math.max(M, 2)], ylim: yRange([[Math.min(bot, lam1), Math.min(top, lam1 * 1.2 + 1e-12)]]),
+  });
+}
+
+// ---- Ritz
+
+function fillRitz(k, sols, lamList) {
+  const cv = $("rChart"), pick = $("rnpick");
+  if (!sols.length) { $("rTable").innerHTML = ""; cv.hidden = true; return; }
+  const cols = Math.min(3, Math.max(...sols.map((s) => s.lambda.length)));
+  const head = `<thead><tr><th>n</th>${Array.from({ length: cols }, (_, j) => `<th>λ<sub>${j + 1}</sub><sup>(n)</sup></th>`).join("")}</tr></thead>`;
+  const body = sols.map((s) => `<tr><td>${s.n}</td>${Array.from({ length: cols }, (_, j) => `<td>${j < s.lambda.length ? sciHtml(s.lambda[j]) : "—"}</td>`).join("")}</tr>`).join("")
+    + `<tr><td>точные</td>${Array.from({ length: cols }, (_, j) => `<td>${j < lamList.length ? sciHtml(lamList[j]) : "—"}</td>`).join("")}</tr>`;
+  $("rTable").innerHTML = head + `<tbody>${body}</tbody>`;
+  pick.max = sols.length;
+  if (+pick.value > sols.length) pick.value = sols.length;
+  const n = +pick.value, s = sols[n - 1];
+  $("rNval").textContent = n;
+  cv.hidden = false;
+  const idx = s.lambda.reduce((b, v, i) => (Math.abs(Math.abs(v) - Math.abs(lamList[0])) < Math.abs(Math.abs(s.lambda[b]) - Math.abs(lamList[0])) ? i : b), 0);
+  const fn = s.eigenfunction(idx), y1 = ref.eigenfunction(0);
+  const xs = Array.from({ length: 241 }, (_, i) => k.lo + (i + 0.5) / 241 * (k.hi - k.lo));
+  const yr = xs.map(y1);
+  let dot = 0;
+  const g = compositeGauss(k.lo, k.hi, 8, 16);
+  for (let i = 0; i < g.x.length; i++) dot += g.w[i] * fn(g.x[i]) * y1(g.x[i]);
+  const sign = dot < 0 ? -1 : 1;
+  const ya = xs.map((x) => sign * fn(x));
+  plotLines(cv, { series: [{ xs, ys: yr, color: css("--text-2"), width: 3 }, { xs, ys: ya, color: css("--c2"), width: 1.8 }], xlim: [k.lo, k.hi], ylim: yRange([yr, ya]) });
+  $("rLine").innerHTML = `n = ${n}: λ₁<sup>(n)</sup> = ${sciHtml(s.lambda[idx])} не меньше по модулю точного ${sciHtml(Math.abs(lamList[0]))}; косинус угла между функциями ${num(Math.abs(dot))}`;
+}
+
+// ---- Jacobi rotations
+
+let jRun = null;
+function buildMatrixGrid(size) {
+  const g = $("mgrid");
+  g.style.gridTemplateColumns = `repeat(${size}, minmax(0, 1fr))`;
+  g.innerHTML = Array.from({ length: size * size }, (_, c) => { const i = Math.floor(c / size) + 1, j = (c % size) + 1; return `<input id="m${i}${j}" aria-label="a, строка ${i} столбец ${j}" inputmode="decimal">`; }).join("");
+}
+
+function setMatrix(rows) {
+  const size = rows.length;
+  $("msize").value = size;
+  buildMatrixGrid(size);
+  rows.forEach((row, i) => row.forEach((v, j) => { $(`m${i + 1}${j + 1}`).value = v; }));
+}
+
+function mirror(i, j) {
+  if (i < j) { const v = $(`m${i}${j}`).value; $(`m${j}${i}`).value = v; }
+  else if (i > j) { const v = $(`m${i}${j}`).value; $(`m${j}${i}`).value = v; }
+}
+
+function readMatrix() {
+  const n = +$("msize").value, A = new Float64Array(n * n);
+  document.querySelectorAll("#mgrid input").forEach((el) => el.removeAttribute("aria-invalid"));
+  for (let i = 1; i <= n; i++) for (let j = i; j <= n; j++) {
+    const el = $(`m${i}${j}`);
+    let v;
+    try { v = evalConstant(el.value); } catch (e) { el.setAttribute("aria-invalid", "true"); e.place = `Матрица, строка ${i}, столбец ${j}`; throw e; }
+    A[(i - 1) * n + (j - 1)] = v; A[(j - 1) * n + (i - 1)] = v;
+  }
+  return { A, n };
+}
+
+function updateJacobi() {
+  let prob;
+  try { prob = readMatrix(); $("merr").textContent = ""; } catch (e) {
+    $("merr").textContent = e instanceof ExprError ? describe(e) : e.message;
+    $("jsec").classList.add("stale");
+    $("jwarn").textContent = "Ввод с ошибкой: показаны прежние значения";
+    return;
+  }
+  $("jsec").classList.remove("stale");
+  const { A, n } = prob;
+  jRun = jacobiRotations(A, n, { maxSteps: 120 });
+  const r = jRun, P = r.steps.length, slider = $("jp");
+  slider.max = P;
+  if (+slider.value > P) slider.value = P;
+  drawJacobiState();
+  $("jwarn").textContent = P >= 120 ? "Остановка на 120 вращениях" : "";
+  const sMax = r.S0;
+  const ps = Array.from({ length: P + 1 }, (_, i) => i);
+  const sVals = [r.S0, ...r.steps.map((s) => s.S)];
+  const bound = ps.map((p) => r.S0 * r.rho ** p);
+  $("jChart").hidden = !(P > 0 && sMax > 0);
+  if (P > 0 && sMax > 0) {
+    const [lo, hi] = logRange([sVals, bound]);
+    plotLines($("jChart"), { series: [{ xs: ps, ys: bound, color: css("--text-2"), width: 1.6, dash: [6, 4] }, { xs: ps, ys: sVals.map((v) => (v > 0 ? v : NaN)), color: css("--c3"), width: 2.2, dots: 2.5 }], xlim: [0, Math.max(P, 1)], ylim: [Math.max(lo, 1e-20), hi], ylog: true });
+  }
+  const head = "<thead><tr><th>p</th><th>пара (k, l)</th><th>a<sub>kl</sub></th><th>φ</th><th>S(A<sub>p</sub>)</th><th>ρ<sup>p</sup>S(A₀)</th></tr></thead>";
+  const body = [`<tr><td>0</td><td>—</td><td>—</td><td>—</td><td>${sciHtml(r.S0)}</td><td>${sciHtml(r.S0)}</td></tr>`, ...r.steps.map((s) => `<tr><td>${s.p}</td><td>(${s.k + 1}, ${s.l + 1})</td><td>${sciHtml(s.akl)}</td><td>${num(s.phi)}</td><td>${sciHtml(s.S)}</td><td>${sciHtml(r.S0 * r.rho ** s.p)}</td></tr>`)].join("");
+  $("jTable").innerHTML = head + `<tbody>${body}</tbody>`;
+  let ev = [];
+  try { ev = eigenvalues(A, n).map((z) => z.re).sort((a, b) => a - b); } catch (e) { ev = []; }
+  const diag = Array.from(r.diagonal).sort((a, b) => a - b);
+  $("jeig").innerHTML = `После ${P} вращений диагональ: ${diag.map(num).join("; ")}. Собственные числа матрицы по QR-итерациям numkit: ${ev.map(num).join("; ")}. Оценка заметки для ε = 10<sup>−3</sup> требует ${r.S0 > 0 ? jacobiStepsBound(n, r.S0, 1e-3) : 0} вращений, нужно было ${P}`;
+}
+
+function drawJacobiState() {
+  if (!jRun) return;
+  const r = jRun, n = r.n, p = +$("jp").value;
+  $("jpval").textContent = p;
+  const M = p === 0 ? r.A0 : r.steps[p - 1].A, next = r.steps[p];
+  let html = "<table class=\"mtab sm\"><tbody>";
+  for (let i = 0; i < n; i++) {
+    html += "<tr>" + Array.from({ length: n }, (_, j) => {
+      const hit = next && ((i === next.k && j === next.l) || (i === next.l && j === next.k));
+      return `<td${hit ? " class=\"cell-hit\"" : ""}>${num(M[i * n + j])}</td>`;
+    }).join("") + "</tr>";
+  }
+  $("jmat").innerHTML = html + "</tbody></table>";
+  const S = p === 0 ? r.S0 : r.steps[p - 1].S;
+  $("jinfo").innerHTML = next
+    ? `Следующее вращение: пара (${next.k + 1}, ${next.l + 1}), a<sub>kl</sub> = ${sciHtml(next.akl)}, tan 2φ = 2a<sub>kl</sub>/(a<sub>kk</sub> − a<sub>ll</sub>), φ = ${num(next.phi)}. Сейчас S = ${sciHtml(S)}, после него ${sciHtml(next.S)} = S − 2a<sub>kl</sub>²`
+    : `Вращений больше нет: S(A<sub>p</sub>) = ${sciHtml(S)}, диагональ даёт собственные числа`;
+}
+
+// ---- presets and events
+
+KERNEL_PRESETS.forEach((q, i) => { const o = document.createElement("option"); o.value = i; o.textContent = q.name; $("preset").appendChild(o); });
+MATRIX_PRESETS.forEach((q, i) => { const o = document.createElement("option"); o.value = i; o.textContent = q.name; $("mpreset").appendChild(o); });
+
+function applyKernel(q) {
+  $("lo").value = q.lo; $("hi").value = q.hi; $("kernel").value = q.kernel; $("omega").value = q.omega;
+  $("ksteps").value = q.steps || "8"; $("tm").value = q.traceM || "6"; $("rbasis").value = q.basis || "legendre"; $("rn").value = q.nRitz || "8";
+  CURRENT_EXACT = (q.exact || []).map((t) => evalConstant(t));
+  lastKey = "";
+}
+
+$("preset").addEventListener("input", () => { applyKernel(KERNEL_PRESETS[+$("preset").value]); update(); });
+for (const id of ["lo", "hi", "kernel", "omega"]) $(id).addEventListener("input", () => { if (id !== "omega") CURRENT_EXACT = []; schedule(); });
+for (const id of ["ksteps", "tm", "rbasis", "rn"]) $(id).addEventListener("input", update);
+$("kn").addEventListener("input", update);
+$("rnpick").addEventListener("input", update);
+$("mpreset").addEventListener("input", () => { setMatrix(MATRIX_PRESETS[+$("mpreset").value].A); $("jp").value = 0; updateJacobi(); });
+$("msize").addEventListener("input", () => {
+  const n = +$("msize").value, rows = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? String(2 + i) : Math.abs(i - j) === 1 ? "1" : "0")));
+  setMatrix(rows); $("jp").value = 0; updateJacobi();
+});
+$("mgrid").addEventListener("input", (ev) => {
+  const m = /^m(\d)(\d)$/.exec(ev.target.id);
+  if (m) mirror(+m[1], +m[2]);
+  $("jp").value = 0;
+  updateJacobi();
+});
+$("jp").addEventListener("input", drawJacobiState);
+window.addEventListener("resize", () => { update(); updateJacobi(); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { update(); updateJacobi(); });
+
+applyKernel(KERNEL_PRESETS[0]);
+setMatrix(MATRIX_PRESETS[0].A);
+update();
+updateJacobi();
+</script>
+</body>
+</html>

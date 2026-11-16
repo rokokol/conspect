@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница логистической регрессии</title>
+<style>
+/*COMMON_CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница логистической регрессии</h1>
+  <p class="lead">Логистическая регрессия на полиномиальных признаках степени d с L2-регуляризацией силы 1/C, как LogisticRegression в sklearn. Фон — вероятность класса, линия — граница P = 0,5. Залитые точки — обучение, полые — тест. Внизу веса модели на стандартизованных признаках; щелчок по полю раскладывает логит выбранной точки на вклады признаков</p>
+  <div class="wrap">
+    <div class="plots" style="display:grid;gap:12px">
+      <canvas id="cv" class="square" width="640" height="640" aria-label="Зоны логистической регрессии"></canvas>
+      <canvas id="bars" width="640" height="260" aria-label="Веса и вклады признаков"></canvas>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="moons">Две луны</option>
+          <option value="circles">Кольца</option>
+          <option value="xor">XOR</option>
+          <option value="linear">Почти линейно разделимые</option>
+        </select>
+      </label>
+      <label>Степень признаков d: <b id="dv"></b>
+        <input id="deg" type="range" min="1" max="7" value="1">
+      </label>
+      <label>Признаки
+        <select id="feat">
+          <option value="all">все одночлены: x₁, x₂, x₁², x₁x₂, x₂², …</option>
+          <option value="pure">только степени: x₁, x₂, x₁², x₂², …</option>
+        </select>
+      </label>
+      <label>C = <b id="cvv"></b> (больше C — слабее регуляризация)
+        <input id="lc" type="range" min="-3" max="4" step="0.1" value="0">
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="score" id="score"></div>
+      <p class="note">При d = 1 граница — прямая: на кольцах и XOR модель бессильна. Полиномиальные признаки дают кривую границу; при большом C и большой степени она огибает отдельные точки обучения. Без смешанных произведений (только степени) логит — сумма f(x₁) + g(x₂), и XOR такой моделью не разделить ни при какой степени: суммы логита по двум диагоналям любого прямоугольника всегда равны</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+let probe = null, hoverBar = -1, barsGeom = null, lastFit = null;
+
+
+// Weights, or with a probe the split of its logit: b + sum_j w_j z_j,
+// where z_j is the standardised j-th polynomial feature of the probe point.
+// The page uses the notes' notation (w, b); m.theta is only mlcore's storage.
+function drawBars(m, deg) {
+  const bv = $("bars"), bx = bv.getContext("2d");
+  bx.clearRect(0, 0, bv.width, bv.height);
+  const names = polyNames(["x₁", "x₂"], deg, { pure: m.pure });
+  let vals, title, labels;
+  if (probe) {
+    const f = polyFeatures(probe, deg, { pure: m.pure });
+    const contrib = f.map((v, j) => m.theta[j + 1] * ((v - m.mean[j]) / m.std[j]));
+    vals = [m.theta[0], ...contrib];
+    labels = ["b", ...names];
+    const logit = vals.reduce((s, v) => s + v, 0);
+    const p = 1 / (1 + Math.exp(-logit));
+    const ptxt = p > 0.9999 ? "> 0,9999" : p < 0.0001 ? "< 0,0001" : `= ${toComma(p, 4)}`;
+    title = `вклады в логит точки: сумма ${num(logit)} → P(класс 1) ${ptxt}`;
+  } else {
+    vals = m.theta.slice(1);
+    labels = names;
+    title = "веса wⱼ на стандартизованных признаках (щёлкни по полю — вклады точки)";
+  }
+  const vmax = Math.max(1e-9, ...vals.map(Math.abs));
+  // The title gets its own band above the plot, clear of the top tick label.
+  // Labels stay horizontal; wider than one bar's slot, they are staggered over
+  // two rows. Wider still, they are hidden and the hovered bar shows its name.
+  // Subscripts make labels ~15% narrower than their plain-text width.
+  bx.font = font(13);
+  const slot = (bv.width - 62) / vals.length;
+  const labelW = Math.max(...labels.map((l) => bx.measureText(l).width)) * 0.85;
+  const rows = Math.ceil(labelW / (slot * 0.95)), ROW = 19;
+  const g = frame(bv, [0, vals.length], [-vmax, vmax], { margin: [52, 34, 10, rows <= 2 ? 16 + ROW * rows : 34] });
+  barsGeom = { g, n: vals.length };
+  if (rows > 2 && hoverBar < 0) {
+    bx.fillStyle = css("--text-2"); bx.textAlign = "center"; bx.textBaseline = "alphabetic";
+    bx.fillText(`${vals.length} признаков — наведи на столбик, чтобы увидеть его признак`, g.ml + g.W / 2, g.mt + g.H + 18);
+  }
+  axes(bx, g, { yticks: [-vmax, 0, vmax], yfmt: num });
+  bx.fillStyle = css("--text"); bx.font = font(12); bx.textAlign = "left"; bx.textBaseline = "top";
+  mathText(bx, title, 8, 8);
+  const bw = Math.max(2, (g.W / vals.length) * 0.7);
+  vals.forEach((v, j) => {
+    const x = g.px(j + 0.5) - bw / 2, y0 = g.py(0), y1 = g.py(v);
+    // Positive pushes towards class 1 (bow), negative towards class 0 (rule).
+    bx.fillStyle = v >= 0 ? css("--c1") : css("--c0");
+    bx.fillRect(x, Math.min(y0, y1), bw, Math.max(1, Math.abs(y1 - y0)));
+    const hover = j === hoverBar;
+    if (rows > 2 && !hover) return;
+    bx.fillStyle = css(hover ? "--text" : "--text-2"); bx.font = font(13); bx.textBaseline = "alphabetic"; bx.textAlign = "center";
+    mathText(bx, labels[j], g.px(j + 0.5), g.mt + g.H + 18 + (rows <= 2 ? ROW * (j % rows) : 0));
+  });
+}
+
+function logloss(m, X, y) {
+  return X.reduce((s, x, i) => {
+    const p = Math.min(Math.max(logregProba(m, x), 1e-12), 1 - 1e-12);
+    return s - (y[i] ? Math.log(p) : Math.log(1 - p));
+  }, 0) / X.length;
+}
+
+function draw() {
+  const d = DATA[$("ds").value], deg = +$("deg").value, C = 10 ** +$("lc").value;
+  $("dv").textContent = deg; $("cvv").textContent = num(C);
+  const m = fitLogreg(d.Xtr, d.ytr, { degree: deg, C, pure: $("feat").value === "pure" });
+  const proba = (x) => { const p = logregProba(m, x); return [1 - p, p]; };
+  const v = dataView(cv, d);
+  drawClassifier(ctx, v, d, proba, [0, 1], { showTest: $("showTest").checked, N: 80 });
+  if (probe) {
+    probeMark(ctx, ...v.toPx(probe));
+  }
+  lastFit = [m, deg];
+  drawBars(m, deg);
+  const predict = argmaxClass(proba, [0, 1]);
+  const wnorm = Math.hypot(...m.theta.slice(1));
+  $("score").innerHTML =
+    `<span>Точность на обучении</span><span>${toComma(accuracy(d.Xtr.map(predict), d.ytr), 3)}</span>` +
+    `<span>Точность на тесте</span><span>${toComma(accuracy(d.Xte.map(predict), d.yte), 3)}</span>` +
+    `<span>Log loss на обучении</span><span>${toComma(logloss(m, d.Xtr, d.ytr), 3)}</span>` +
+    `<span>Log loss на тесте</span><span>${toComma(logloss(m, d.Xte, d.yte), 3)}</span>` +
+    `<span>Норма весов ‖w‖₂</span><span>${num(wnorm)}</span>`;
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  const v = dataView(cv, DATA[$("ds").value]);
+  const r = cv.getBoundingClientRect();
+  probe = v.toX(((e.clientX - r.left) / r.width) * cv.width, ((e.clientY - r.top) / r.height) * cv.height);
+  draw();
+});
+// Hovering a bar names its feature when the labels do not fit; only the bars redraw.
+$("bars").addEventListener("pointermove", (e) => {
+  if (!barsGeom || !lastFit) return;
+  const r = $("bars").getBoundingClientRect(), { g, n } = barsGeom;
+  const px = ((e.clientX - r.left) / r.width) * $("bars").width;
+  const j = px < g.ml || px > g.ml + g.W ? -1 : Math.floor(((px - g.ml) / g.W) * n);
+  if (j !== hoverBar) { hoverBar = j; drawBars(...lastFit); }
+});
+$("bars").addEventListener("pointerleave", () => { hoverBar = -1; if (lastFit) drawBars(...lastFit); });
+["ds", "deg", "feat", "lc", "showTest"].forEach((id) => $(id).addEventListener("input", () => { if (id === "ds") probe = null; draw(); }));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница многоклассовой классификации</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .pair { grid-template-columns: 1fr; } }
+.cap { font-size: 13px; color: var(--text-2); margin: 0 0 4px; }
+.cap b { color: var(--text); font-weight: normal; }
+.detail { font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница многоклассовой классификации</h1>
+  <p class="lead">Три облака, классы C₀, C₁, C₂, и две схемы сборки трёх бинарных логистических регрессий в многоклассовый ответ. One vs Rest: каждый класс против всех остальных, побеждает наибольший отступ; One vs One: каждая пара классов своей моделью, побеждает класс с наибольшим числом голосов</p>
+  <p class="lead">Серое — места, где ответа нет: по знаку ни один классификатор или несколько говорят "мой", при голосовании ничья. Залитые точки — обучение, полые — тест. Щелчок по полю показывает ответы моделей в этой точке</p>
+  <div class="wrap">
+    <div class="plots">
+      <div class="pair">
+        <div><p class="cap"><b>One vs Rest</b>: три границы "класс против остальных", цвет линии — цвет класса</p><canvas id="ovr" class="square" width="480" height="480" aria-label="Зоны One vs Rest"></canvas></div>
+        <div><p class="cap"><b>One vs One</b>: границы пар, сплошная C₀|C₁, штрих C₀|C₂, точки C₁|C₂</p><canvas id="ovo" class="square" width="480" height="480" aria-label="Зоны One vs One"></canvas></div>
+      </div>
+      <div class="pair detail" id="detail"></div>
+    </div>
+    <div class="panel">
+      <label>Сдвиг среднего облака поперёк линии крайних: <b id="tv"></b>
+        <input id="shift" type="range" min="-2.5" max="2.5" step="0.1" value="0">
+      </label>
+      <label>Объектов в среднем облаке: <b id="nv"></b> (в крайних по 100)
+        <input id="nmid" type="range" min="10" max="100" step="5" value="40">
+      </label>
+      <label>Разброс облаков σ = <b id="sv"></b>
+        <input id="sig" type="range" min="0.3" max="1" step="0.05" value="0.5">
+      </label>
+      <label>Что закрашено
+        <select id="view">
+          <option value="sign">Знак и голоса (серые зоны)</option>
+          <option value="final">Итог (отступ, голоса + уверенность)</option>
+        </select>
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="row"><input id="showLines" type="checkbox" checked><span>Показывать границы бинарных моделей</span></div>
+      <div id="score"></div>
+      <p class="note">При нуле все три облака лежат вдоль одной прямой, и средний класс отделить от остальных одной прямой нельзя: модель "средний против остальных" его не выделяет, и в One vs Rest его полоса узка, особенно когда он мал</p>
+      <p class="note">Пары в One vs One видят средний класс отдельно от каждого крайнего. Сдвиг среднего облака в сторону лечит это для обоих методов. Серая доля — по сетке 60 × 60 в показанной области</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const A = $("ovr"), B = $("ovo");
+let probe = null;
+
+// Fixed standard-normal samples: the sliders only move and scale the same points.
+const Z = (() => {
+  const r = rng(5);
+  return [0, 1, 2].map(() => Array.from({ length: 200 }, () => [gauss(r), gauss(r)]));
+})();
+const EXT = [[-1.5, -1.2], [1.5, 1.2]], NORMAL = [-0.6247, 0.7809];
+const DOMAIN = [[-4, -4], [4, 4]];
+
+function build() {
+  const t = +$("shift").value, nm = +$("nmid").value, s = +$("sig").value;
+  const centers = [EXT[0], [t * NORMAL[0], t * NORMAL[1]], EXT[1]];
+  const take = (k, from, n) => Z[k].slice(from, from + n).map((z) => [centers[k][0] + s * z[0], centers[k][1] + s * z[1]]);
+  const cnt = [100, nm, 100], nte = [30, Math.max(3, Math.round(nm * 0.3)), 30];
+  const d = { Xtr: [], ytr: [], Xte: [], yte: [] };
+  for (let k = 0; k < 3; k++) {
+    take(k, 0, cnt[k]).forEach((p) => { d.Xtr.push(p); d.ytr.push(k); });
+    take(k, cnt[k], nte[k]).forEach((p) => { d.Xte.push(p); d.yte.push(k); });
+  }
+  return { d, ovr: fitOvr(d.Xtr, d.ytr), ovo: fitOvo(d.Xtr, d.ytr) };
+}
+
+const oneHot = (c) => [0, 1, 2].map((q) => (q === c ? 1 : 0));
+const argmax = (a) => a.indexOf(Math.max(...a));
+
+// Class per rule; null when the rule gives no answer.
+function labelOvr(S, x, view) {
+  const z = ovrDecision(S.ovr, x);
+  if (view === "final") return argmax(z);
+  const mine = z.map((v, k) => (v > 0 ? k : -1)).filter((k) => k >= 0);
+  return mine.length === 1 ? mine[0] : null;
+}
+function labelOvo(S, x, view) {
+  const s = ovoScores(S.ovo, x);
+  if (view === "final") return argmax(s.decision);
+  const top = Math.max(...s.votes);
+  return s.votes.filter((v) => v === top).length === 1 ? argmax(s.votes) : null;
+}
+
+// The exact boundary a x1 + b x2 + c = 0 with a halo in the surface colour.
+function drawLine(ctx, { a, b, c }, v, dash, color, width) {
+  const n2 = a * a + b * b;
+  const p0 = [(-c * a) / n2, (-c * b) / n2], t = [-b / Math.sqrt(n2), a / Math.sqrt(n2)];
+  const ends = [-30, 30].map((u) => v.toPx([p0[0] + u * t[0], p0[1] + u * t[1]]));
+  polyline(ctx, ends, css("--surface"), width + 3);
+  polyline(ctx, ends, color, width, dash);
+}
+
+function paint(cv, S, label, lines) {
+  const ctx = cv.getContext("2d");
+  const v = dataView(cv, { Xtr: DOMAIN, Xte: [] }, 0);
+  drawClassifier(ctx, v, S.d, (x) => { const c = label(x); return c === null ? null : oneHot(c); },
+    [0, 1, 2], { showTest: $("showTest").checked, N: 120, outline: false });
+  if ($("showLines").checked) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height); ctx.clip();
+    lines.forEach(({ line, dash, color }) => drawLine(ctx, line, v, dash, color, 2.5));
+    ctx.restore();
+  }
+  if (probe) probeMark(ctx, ...v.toPx(probe));
+  // Share of the shown area where the rule gives no answer.
+  let none = 0;
+  const M = 60;
+  for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) if (label(v.toX(((j + 0.5) / M) * v.W, ((i + 0.5) / M) * v.W)) === null) none++;
+  return none / (M * M);
+}
+
+const sub3 = ["C₀", "C₁", "C₂"];
+const acc = (label, X, y) => accuracy(X.map((x) => label(x)), y);
+
+function details(S) {
+  if (!probe) {
+    $("detail").innerHTML = `<p class="note" style="grid-column:1/-1">Щёлкни по полю — здесь появятся ответы всех бинарных моделей в этой точке</p>`;
+    return;
+  }
+  const z = ovrDecision(S.ovr, probe), win = argmax(z);
+  let h1 = `<div><table><tr><th>One vs Rest</th><th>w·x + b</th><th>"мой"</th></tr>`;
+  z.forEach((v, k) => { h1 += `<tr class="${k === win ? "win" : ""}"><td>${sub3[k]} против остальных${k === win ? " ◀" : ""}</td><td>${num(v, 3)}</td><td>${v > 0 ? "да" : "нет"}</td></tr>`; });
+  h1 += `</table></div>`;
+  const s = ovoScores(S.ovo, probe), w2 = argmax(s.decision);
+  let h2 = `<div><table><tr><th>One vs One</th><th>w·x + b</th><th>голос</th></tr>`;
+  s.pairs.forEach((p) => { h2 += `<tr><td>${sub3[p.i]} против ${sub3[p.j]}</td><td>${num(p.z, 3)}</td><td>${sub3[p.winner]}</td></tr>`; });
+  h2 += `<tr><td>голоса ${sub3.map((n, k) => `${n}: ${s.votes[k]}`).join(", ")}</td><td colspan="2">итог ${sub3[w2]} ◀</td></tr></table></div>`;
+  $("detail").innerHTML = h1 + h2;
+}
+
+function draw() {
+  const S = build();
+  const view = $("view").value;
+  $("tv").textContent = num(+$("shift").value, 2); $("nv").textContent = $("nmid").value; $("sv").textContent = num(+$("sig").value, 2);
+  const cols = classColors(3).map((c) => `rgb(${c})`);
+  const ovrLines = S.ovr.models.map((m, k) => ({ line: logregLine(m), dash: [], color: cols[k] }));
+  const dashes = [[], [9, 5], [2, 4]];
+  const ovoLines = S.ovo.pairs.map((p, q) => ({ line: logregLine(p.model), dash: dashes[q], color: css("--text") }));
+  const lblA = (x) => labelOvr(S, x, view), lblB = (x) => labelOvo(S, x, view);
+  const noneA = paint(A, S, lblA, ovrLines), noneB = paint(B, S, lblB, ovoLines);
+  const finalA = (x) => labelOvr(S, x, "final"), finalB = (x) => labelOvo(S, x, "final");
+  const share = (label) => (S.d.Xtr.filter((x, i) => S.d.ytr[i] === 1 && label(x) === 1).length / Math.max(1, S.d.ytr.filter((v) => v === 1).length));
+  const row = (name, a, b) => `<tr><td>${name}</td><td>${a}</td><td>${b}</td></tr>`;
+  $("score").innerHTML = `<table><tr><th></th><th>OvR</th><th>OvO</th></tr>` +
+    row("Точность, train", toComma(acc(finalA, S.d.Xtr, S.d.ytr), 2), toComma(acc(finalB, S.d.Xtr, S.d.ytr), 2)) +
+    row("Точность, test", toComma(acc(finalA, S.d.Xte, S.d.yte), 2), toComma(acc(finalB, S.d.Xte, S.d.yte), 2)) +
+    row("Средний найден", toComma(100 * share(finalA), 0) + " %", toComma(100 * share(finalB), 0) + " %") +
+    row("Серая доля", toComma(100 * noneA, 1) + " %", toComma(100 * noneB, 1) + " %") + `</table>`;
+  details(S);
+}
+
+A.addEventListener("pointerdown", (e) => { probe = dataView(A, { Xtr: DOMAIN, Xte: [] }, 0).toX(...canvasXY(A, e)); draw(); });
+B.addEventListener("pointerdown", (e) => { probe = dataView(B, { Xtr: DOMAIN, Xte: [] }, 0).toX(...canvasXY(B, e)); draw(); });
+["shift", "nmid", "sig", "view", "showTest", "showLines"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

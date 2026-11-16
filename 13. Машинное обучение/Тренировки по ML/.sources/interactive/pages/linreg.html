@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница линейной регрессии</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница линейной регрессии</h1>
+  <p class="lead">Прямая ŷ = w₀ + w₁x по двум потерям: МНК минимизирует сумму квадратов остатков e = y − ŷ, MAE — сумму их модулей. Точки можно тащить, щелчок по пустому месту добавляет точку, двойной щелчок по точке её убирает</p>
+  <p class="lead">Выброс — точка, которая к зависимости отношения не имеет: добавь его кнопкой, потяни вверх и посмотри, какая из двух прямых пойдёт за ним</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" width="640" height="460" aria-label="Точки и две прямые"></canvas>
+      <canvas id="share" width="640" height="240" aria-label="Вклад каждой точки в потерю"></canvas>
+    </div>
+    <div class="panel">
+      <div class="buttons">
+        <button id="addOut">Добавить выброс</button>
+        <button id="undo">Убрать последнюю</button>
+        <button id="reset">Сбросить</button>
+      </div>
+      <label>Остатки показывать для
+        <select id="res">
+          <option value="ols" selected>МНК</option>
+          <option value="lad">MAE</option>
+          <option value="none">не показывать</option>
+        </select>
+      </label>
+      <div class="legend"><span><i style="background:var(--model)"></i>МНК (MSE)</span><span><i style="background:var(--model-2)"></i>MAE</span><span><i style="background:var(--train)"></i>точка</span><span><i style="background:none;height:10px;width:10px;border:2px solid var(--mark);border-radius:50%"></i>выброс</span></div>
+      <div id="tbl"></div>
+      <p class="note">Каждая прямая лучше другой по той потере, которую минимизирует: у МНК меньше MSE, у MAE меньше MAE (R² считается от MSE, поэтому лучше у МНК). Нижний график — доля каждой точки в сумме своей потери: квадрат делает одну далёкую точку почти всей потерей МНК, а у MAE её доля остаётся скромной, и прямая её не слушается</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+const XLIM = [0, 10], YLIM = [-2, 18];
+let pts = [], drag = -1, moved = false;
+
+function initial() {
+  // 20 points around y = 2 + 0.8x with noise 0.6, as in the course note.
+  const r = rng(11);
+  return Array.from({ length: 20 }, (_, i) => {
+    const x = 0.25 + (i + r() * 0.8) * (9.5 / 20);
+    return { x, y: 2 + 0.8 * x + 0.6 * gauss(r), out: false };
+  });
+}
+pts = initial();
+
+const F = () => frame(cv, XLIM, YLIM, { margin: [40, 28, 14, 42] });
+const clampPt = (f, x, y) => [Math.min(Math.max(x, XLIM[0]), XLIM[1]), Math.min(Math.max(y, YLIM[0]), YLIM[1])];
+
+function fits() {
+  const x = pts.map((p) => p.x), y = pts.map((p) => p.y);
+  const out = {};
+  for (const [k, fit] of [["ols", olsLine], ["lad", ladLine]]) {
+    const m = fit(x, y);
+    out[k] = { ...m, ...regMetrics(y, x.map((v) => m.w0 + m.w1 * v)) };
+  }
+  return out;
+}
+
+function drawMain(fit) {
+  const f = F();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  axes(ctx, f, { xticks: [0, 2, 4, 6, 8, 10], yticks: [0, 5, 10, 15], xlabel: "x", ylabel: "y" });
+  ctx.save();
+  ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  const which = $("res").value;
+  if (which !== "none") {
+    const m = fit[which];
+    ctx.strokeStyle = css(which === "ols" ? "--model" : "--model-2");
+    ctx.lineWidth = 1.5;
+    pts.forEach((p) => {
+      ctx.beginPath(); ctx.moveTo(f.px(p.x), f.py(p.y)); ctx.lineTo(f.px(p.x), f.py(m.w0 + m.w1 * p.x)); ctx.stroke();
+    });
+  }
+  for (const [k, col] of [["ols", "--model"], ["lad", "--model-2"]]) {
+    const m = fit[k];
+    polyline(ctx, XLIM.map((x) => [f.px(x), f.py(m.w0 + m.w1 * x)]), css(col), 3);
+  }
+  ctx.restore();
+  pts.forEach((p) => {
+    dot(ctx, f.px(p.x), f.py(p.y), css("--train"), { r: 5.5 });
+    if (p.out) {
+      ctx.save(); ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(f.px(p.x), f.py(p.y), 10, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
+    }
+  });
+}
+
+// Share of every point in the sum of its own loss: e^2 / sum e^2 for least
+// squares, |e| / sum |e| for MAE, the points in the order of x.
+function drawShare(fit) {
+  const sv = $("share"), sx = sv.getContext("2d");
+  sx.clearRect(0, 0, sv.width, sv.height);
+  const order = pts.map((_, i) => i).sort((a, b) => pts[a].x - pts[b].x);
+  const e = (k, p) => p.y - (fit[k].w0 + fit[k].w1 * p.x);
+  const sh = { ols: [], lad: [] };
+  const tot = { ols: pts.reduce((s, p) => s + e("ols", p) ** 2, 0), lad: pts.reduce((s, p) => s + Math.abs(e("lad", p)), 0) };
+  for (const i of order) {
+    sh.ols.push(tot.ols > 0 ? e("ols", pts[i]) ** 2 / tot.ols : 0);
+    sh.lad.push(tot.lad > 0 ? Math.abs(e("lad", pts[i])) / tot.lad : 0);
+  }
+  const top = Math.min(1, Math.max(0.1, ...sh.ols, ...sh.lad) * 1.1);
+  const g = frame(sv, [0, order.length], [0, top], { margin: [44, 34, 12, 16] });
+  axes(sx, g, { yticks: [0, top / 2, top], yfmt: (t) => Math.round(t * 100) + "%" });
+  sx.fillStyle = css("--text"); sx.font = font(12); sx.textAlign = "left"; sx.textBaseline = "top";
+  sx.fillText("доля точки в сумме своей потери (точки слева направо по x)", 8, 8);
+  const bw = Math.max(2, (g.W / order.length) * 0.4);
+  order.forEach((i, j) => {
+    const c = g.px(j + 0.5);
+    [["ols", "--model", -bw], ["lad", "--model-2", 0]].forEach(([k, col, off]) => {
+      sx.fillStyle = css(col);
+      const h = g.py(0) - g.py(sh[k][j]);
+      sx.fillRect(c + off, g.py(sh[k][j]), bw, Math.max(h, 0));
+    });
+    if (pts[i].out) { sx.fillStyle = css("--mark"); sx.fillRect(c - bw, g.mt + g.H + 2, bw * 2, 4); }
+  });
+}
+
+function table(fit) {
+  const row = (name, key, d) => `<tr><td>${name}</td><td>${toComma(fit.ols[key], d)}</td><td>${toComma(fit.lad[key], d)}</td></tr>`;
+  $("tbl").innerHTML = `<table><tr><th></th><th>МНК</th><th>MAE</th></tr>` +
+    row("w₀", "w0", 2) + row("w₁", "w1", 3) + row("MSE", "mse", 3) + row("MAE", "mae", 3) + row("R²", "r2", 3) + `</table>`;
+}
+
+function draw() {
+  const fit = fits();
+  drawMain(fit);
+  drawShare(fit);
+  table(fit);
+}
+
+function at(e) {
+  const f = F(), [px, py] = canvasXY(cv, e);
+  return { f, px, py };
+}
+function hit(f, px, py) {
+  let best = -1, bd = 14;
+  pts.forEach((p, i) => { const d = Math.hypot(f.px(p.x) - px, f.py(p.y) - py); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  const { f, px, py } = at(e);
+  const i = hit(f, px, py);
+  if (i >= 0) { drag = i; moved = false; cv.setPointerCapture(e.pointerId); return; }
+  if (px < f.ml || px > f.ml + f.W || py < f.mt || py > f.mt + f.H) return;
+  pts.push({ x: f.dx(px), y: f.dy(py), out: false });
+  draw();
+});
+cv.addEventListener("pointermove", (e) => {
+  if (drag < 0) return;
+  const { f, px, py } = at(e);
+  [pts[drag].x, pts[drag].y] = clampPt(f, f.dx(px), f.dy(py));
+  moved = true;
+  draw();
+});
+cv.addEventListener("pointerup", () => { drag = -1; });
+cv.addEventListener("dblclick", (e) => {
+  const { f, px, py } = at(e);
+  const i = hit(f, px, py);
+  if (i >= 0 && pts.length > 3) { pts.splice(i, 1); draw(); }
+});
+
+$("addOut").addEventListener("click", () => { pts.push({ x: 7.5, y: 14, out: true }); draw(); });
+$("undo").addEventListener("click", () => { if (pts.length > 3) pts.pop(); draw(); });
+$("reset").addEventListener("click", () => { pts = initial(); draw(); });
+$("res").addEventListener("input", draw);
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

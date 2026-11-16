@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница метода Хаффмана</title>
+<style>
+/*COMMON_CSS*/
+svg.tree { width: 100%; height: auto; display: block; }
+svg.tree .edge { stroke: var(--text-2); stroke-width: 1.8; fill: none; }
+svg.tree .edge.live { stroke: var(--accent); stroke-width: 3; }
+svg.tree .bit { fill: var(--text); font: 13px var(--ddlc-font-data); text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--surface); stroke-width: 5px; }
+svg.tree .nd { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+svg.tree .nd.leaf { stroke: var(--c0); stroke-width: 2.5; }
+svg.tree .lab { fill: var(--text); font: 500 13px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; }
+svg.tree .code { fill: var(--accent); font: 14px var(--ddlc-font-data); text-anchor: middle; }
+svg.tree .dim { opacity: 0.22; }
+.keyline { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--text-2); vertical-align: middle; margin-right: 6px; }
+.keyline.live { border-color: var(--accent); border-top-width: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница метода Хаффмана</h1>
+  <p class="lead">Введи частоты символов. Метод склеивает две наименьшие частоты в одну, пока не останется одна, затем расклеивает с конца и приписывает 0 и 1. Двигай шаги и смотри дерево, код, его цену c и энтропию H, ниже которой цена не бывает</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Частоты</h2>
+        <label>Частоты через пробел
+          <input id="freq" type="text" spellcheck="false" autocomplete="off" placeholder="0.30 0.25 0.20 0.10 0.10 0.05">
+        </label>
+        <p id="ferr" class="err" role="status"></p>
+        <label>Готовый набор
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="0.30 0.25 0.20 0.10 0.10 0.05">шесть символов из конспекта</option>
+            <option value="0.5 0.25 0.125 0.125">степени двойки: цена равна энтропии</option>
+            <option value="1 1 1 1 1 1 1 1">восемь равных частот</option>
+            <option value="0.9 0.05 0.05">одна частота почти всё</option>
+            <option value="a:5 b:9 c:12 d:13 e:16 f:45">пары имя:значение</option>
+          </select>
+        </label>
+        <p class="note" data-keep-dots>От двух до десяти положительных чисел, можно целых или десятичных; пары вида a:0.4 задают имя символа. Частоты не обязаны давать сумму 1, цена считается по долям</p>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Склейки</h2>
+        <div class="ctl">
+          <button id="prev" aria-label="Шаг назад">←</button>
+          <input id="step" type="range" min="0" max="1" value="0" aria-label="Число сделанных склеек">
+          <button id="next" aria-label="Шаг вперёд">→</button>
+        </div>
+        <div id="steps"></div>
+      </section>
+      <section>
+        <h2>Дерево</h2>
+        <svg id="tree" class="tree" role="img" aria-label="Дерево кода"></svg>
+        <div class="legend">
+          <span><span class="keyline live"></span>склейки, уже сделанные на этом шаге</span>
+          <span><span class="keyline"></span>склейки впереди (бледнее)</span>
+        </div>
+      </section>
+      <section>
+        <h2>Код и цена</h2>
+        <div id="result"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+let freqs = null;
+let run = null;
+
+function fmt(v) {
+  return toComma(parseFloat((v / freqs.scale).toFixed(6)), null);
+}
+
+const nodeLabel = (v) => fmt(run.weight[v]) + (v >= freqs.values.length ? "*" : "");
+
+function renderSteps(k) {
+  const n = freqs.values.length;
+  const rows = run.steps.map((s, i) => {
+    const last = i === run.steps.length - 1;
+    const text = last
+      ? `${fmt(run.weight[s.left])} и ${fmt(run.weight[s.right])}: остались две частоты, слова 0 и 1`
+      : `${fmt(run.weight[s.left])} и ${fmt(run.weight[s.right])} в ${fmt(run.weight[s.node])}`;
+    return `<tr class="${i === k - 1 ? "sel" : ""}"><td>${i}</td><td>${s.list.map(nodeLabel).join(", ")}</td><td>${esc(text)}</td></tr>`;
+  }).join("");
+  $("steps").innerHTML = `<table class="compact"><tr><th>Шаг</th><th>Список частот</th><th>Склеено</th></tr>${rows}</table>
+    <p class="note">${k === 0 ? "Склеек ещё нет: список упорядочен по убыванию" : `Сделано склеек ${k} из ${run.steps.length}, последняя в выделенной строке`}. Звёздочка: склеенная частота; новая частота встаёт после равных ей. Из двух склеенных слово 0 получает та, что левее в списке</p>`;
+}
+
+function layoutTree() {
+  const n = freqs.values.length;
+  const pos = new Map();
+  let leaf = 0, depthMax = 0;
+  const place = (v, d) => {
+    depthMax = Math.max(depthMax, d);
+    if (run.kids[v] === null) { pos.set(v, [leaf++, d]); return; }
+    const [l, r] = run.kids[v];
+    place(l, d + 1); place(r, d + 1);
+    pos.set(v, [(pos.get(l)[0] + pos.get(r)[0]) / 2, d]);
+  };
+  place(run.root, 0);
+  return { pos, leaves: leaf, depth: depthMax, n };
+}
+
+function renderTree(k) {
+  const { pos, leaves, depth, n } = layoutTree();
+  const dx = 64, dy = 62, mx = 40, top = 30;
+  const W = Math.max(leaves - 1, 1) * dx + 2 * mx, H = top + depth * dy + 70;
+  const X = (v) => mx + pos.get(v)[0] * dx, Y = (v) => top + pos.get(v)[1] * dy;
+  const alive = (v) => v < n || v - n < k;           // a glued node exists once its step is done
+  let s = "";
+  const edges = [];
+  run.kids.forEach((kid, v) => { if (kid) kid.forEach((c, side) => edges.push([v, c, side])); });
+  for (const [v, c, side] of edges) {
+    const live = alive(v);
+    s += `<g class="${live ? "" : "dim"}"><line class="edge${live ? " live" : ""}" x1="${X(v)}" y1="${Y(v)}" x2="${X(c)}" y2="${Y(c)}"></line>`
+      + `<text class="bit" x="${(X(v) + X(c)) / 2}" y="${(Y(v) + Y(c)) / 2}">${side}</text></g>`;
+  }
+  pos.forEach((_, v) => {
+    const leaf = run.kids[v] === null;
+    const label = leaf ? freqs.names[v] : fmt(run.weight[v]);
+    const r = leaf ? 17 : 22;
+    s += `<g class="${alive(v) ? "" : "dim"}"><circle class="nd${leaf ? " leaf" : ""}" cx="${X(v)}" cy="${Y(v)}" r="${r}"></circle><text class="lab" x="${X(v)}" y="${Y(v)}">${esc(label)}</text>`;
+    if (leaf) s += `<text class="lab" x="${X(v)}" y="${Y(v) + 31}">${fmt(freqs.values[v])}</text><text class="code" x="${X(v)}" y="${Y(v) + 52}">${run.codes[v]}</text>`;
+    s += "</g>";
+  });
+  $("tree").setAttribute("viewBox", `0 0 ${W} ${H}`);
+  $("tree").innerHTML = s;
+}
+
+function renderResult() {
+  const n = freqs.values.length, total = freqs.total;
+  const order = run.codes.map((_, i) => i).sort((a, b) => run.codes[a].length - run.codes[b].length || a - b);
+  const rows = order.map((i) => `<tr><td>${esc(freqs.names[i])}</td><td>${fmt(freqs.values[i])}</td><td>${toComma(freqs.values[i] / total, 4)}</td><td>${run.codes[i]}</td><td>${run.codes[i].length}</td></tr>`).join("");
+  const terms = order.map((i) => `${run.codes[i].length}·${toComma(freqs.values[i] / total, 3)}`).join(" + ");
+  const H = entropy(freqs.values);
+  const glued = run.steps.slice(0, -1).map((s) => toComma(run.weight[s.node] / total, 3)).join(" + ");
+  const fixed = Math.ceil(Math.log2(n));
+  let check = "";
+  if (n <= 7) {
+    const best = optimalWeightedLength(freqs.values);
+    const mine = run.codes.reduce((s, c, i) => s + freqs.values[i] * c.length, 0);
+    check = `<p class="check">${best === mine ? "Проверка перебором длин слов по неравенству Макмиллана: дешевле кода нет" : "ОШИБКА: перебор нашёл код дешевле"}</p>`;
+  } else {
+    check = `<p class="check">Перебор длин слов для сравнения запускается при числе символов до семи</p>`;
+  }
+  $("result").innerHTML = `<table class="compact"><tr><th>Символ</th><th>Частота</th><th>Доля p</th><th>Слово</th><th>Длина l</th></tr>${rows}</table>
+    <div class="formula"><b>c</b> = Σ p·l = ${esc(terms)} = <b>${toComma(run.cost, 4)}</b><br>
+      c = 1 + склеенные частоты ${glued ? "= 1 + " + esc(glued) : "= 1"} = ${toComma(1 + run.glued, 4)}<br>
+      <b>H</b> = −Σ p·log₂ p = ${toComma(H, 4)}, и H ≤ c &lt; H + 1: ${toComma(H, 3)} ≤ ${toComma(run.cost, 3)} &lt; ${toComma(H + 1, 3)}<br>
+      равномерный код стоил бы ⌈log₂ ${n}⌉ = ${fixed}</div>${check}`;
+}
+
+function render() {
+  const m = run.steps.length;
+  $("step").max = m;
+  const k = Math.min(+$("step").value, m);
+  $("step").value = k;
+  $("prev").disabled = k === 0; $("next").disabled = k === m;
+  renderSteps(k); renderTree(k); renderResult();
+}
+
+function apply() {
+  try {
+    freqs = parseFrequencies($("freq").value);
+    run = huffman(freqs.values);
+    $("freq").removeAttribute("aria-invalid"); $("ferr").textContent = "";
+    render();
+  } catch (e) {
+    if (!(e instanceof FormulaError)) throw e;
+    $("freq").setAttribute("aria-invalid", "true");
+    $("ferr").textContent = e.message;
+  }
+}
+
+$("freq").addEventListener("input", () => { $("step").value = 0; apply(); });
+$("preset").addEventListener("input", () => {
+  if (!$("preset").value) return;
+  $("freq").value = $("preset").value; $("preset").value = ""; $("step").value = 0; apply();
+});
+$("step").addEventListener("input", render);
+$("prev").addEventListener("click", () => { $("step").value = +$("step").value - 1; render(); });
+$("next").addEventListener("click", () => { $("step").value = +$("step").value + 1; render(); });
+
+$("freq").value = "0.30 0.25 0.20 0.10 0.10 0.05";
+apply();
+</script>
+</body>
+</html>

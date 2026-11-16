@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница метода главных компонент</title>
+<style>
+/*COMMON_CSS*/
+.field { display: grid; grid-template-columns: 1fr 96px; gap: 4px 8px; align-items: center; }
+.field input[type=number] { text-align: right; }
+.checks, .modes { display: grid; gap: 4px; }
+.checks label, .modes label { display: flex; gap: 6px; align-items: center; }
+.checks input, .modes input { margin: 0; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btns button { flex: 1 1 auto; }
+.legend .c0 { color: var(--c0); }
+.legend .c1 { color: var(--c1); }
+.legend .c2 { color: var(--c2); }
+.legend .c3 { color: var(--c3); }
+.legend .ink { color: var(--text); }
+.legend .grey { color: var(--text-2); }
+canvas.plane { cursor: crosshair; }
+canvas.strip { height: 64px; }
+.score span:nth-child(odd) { white-space: normal; }
+.score span:nth-child(even) { min-width: 0; overflow-wrap: anywhere; }
+.cmat { width: auto; margin: 0 auto; }
+.cmat td { text-align: right; padding: 2px 10px; border: 0; }
+.sums th, .sums td { white-space: normal; }
+.sums td.win { color: var(--text); }
+.sums td.lose { color: var(--text-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница метода главных компонент</h1>
+  <p class="lead">Облако точек на плоскости и его главные оси w¹, w² из центра масс. Создай облако ползунками, щёлкни по плоскости, чтобы добавить точку, потяни точку, чтобы сдвинуть её, и смотри, как меняются λ₁, λ₂ и доля объяснённой дисперсии</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Облако</h2>
+        <label>Число точек N = <b id="nv"></b>
+          <input id="n" type="range" min="2" max="300" step="1" value="60">
+        </label>
+        <label>Растяжение по оси x: <b id="sxv"></b>
+          <input id="sx" type="range" min="0" max="4" step="0.1" value="3">
+        </label>
+        <label>Растяжение по оси y: <b id="syv"></b>
+          <input id="sy" type="range" min="0" max="4" step="0.1" value="1">
+        </label>
+        <label>Угол поворота: <b id="anv"></b>
+          <input id="angle" type="range" min="-90" max="90" step="1" value="30">
+        </label>
+        <label>Шум: <b id="nov"></b>
+          <input id="noise" type="range" min="0" max="2" step="0.05" value="0.3">
+        </label>
+        <div class="field">
+          <label for="seed">Seed</label>
+          <input id="seed" type="number" value="20" step="1" min="0" max="999999">
+        </div>
+        <div class="btns"><button id="fresh" type="button">Новое облако</button></div>
+        <p class="note">Ползунки и seed создают облако заново, добавленные и сдвинутые точки при этом пропадают</p>
+      </div>
+      <div class="sec">
+        <h2>Точки</h2>
+        <div class="modes" role="radiogroup" aria-label="Что делает щелчок по плоскости">
+          <label><input type="radio" name="mode" id="modeMove" value="move" checked> добавлять и тянуть</label>
+          <label><input type="radio" name="mode" id="modeDelete" value="delete"> удалять</label>
+        </div>
+        <div class="btns"><button id="clear" type="button">Убрать все точки</button></div>
+      </div>
+      <div class="sec checks">
+        <h2>Показать</h2>
+        <label><input id="showAxes" type="checkbox" checked> оси w¹, w²</label>
+        <label><input id="showEllipse" type="checkbox" checked> эллипс рассеяния</label>
+        <label><input id="showPerp" type="checkbox" checked> перпендикуляры к прямой первой компоненты</label>
+        <label><input id="showOls" type="checkbox"> прямая МНК и вертикальные отклонения</label>
+        <label><input id="showProj" type="checkbox"> проекции на первую компоненту</label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Плоскость</h2>
+        <canvas id="plane" class="plane square" role="img" aria-label="Плоскость с облаком точек, главными осями и эллипсом рассеяния"></canvas>
+        <div class="legend">
+          <span class="c0"><i style="background:currentColor"></i>точки</span>
+          <span class="c1"><i style="background:currentColor"></i>ось w¹</span>
+          <span class="c2"><i style="background:currentColor"></i>ось w²</span>
+          <span class="grey"><i style="background:currentColor"></i>эллипс рассеяния</span>
+          <span class="c3"><i style="background:currentColor"></i>прямая МНК</span>
+        </div>
+        <p class="note" id="status" role="status"></p>
+      </section>
+      <section id="stripSec" hidden>
+        <h2>Одномерные данные</h2>
+        <canvas id="strip" class="strip" role="img" aria-label="Координаты точек вдоль первой главной компоненты"></canvas>
+        <p class="note">Координаты точек вдоль w¹: каждая точка заменена одним числом (x, w¹), остальное отброшено</p>
+      </section>
+      <section>
+        <h2>Числа</h2>
+        <div class="score" id="numbers"></div>
+        <div class="formula" id="cmat"></div>
+      </section>
+      <section>
+        <h2>Две прямые</h2>
+        <div id="sums"></div>
+        <p class="note" id="sumsNote"></p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*LACORE*/
+const fmt = (x) => formatNumber(x, 4);
+const RADIUS = 2;        // the semi-axes of the ellipse and the arrows are RADIUS sqrt(lambda_j)
+const HIT = 14;          // px: how close to a point a press must be to grab it
+
+let pts = [];
+let R = 6;               // the plane shows [-R, R] x [-R, R]
+let drag = -1;
+let res = null;
+
+function params() {
+  return { n: +$("n").value, sx: +$("sx").value, sy: +$("sy").value, angle: +$("angle").value, noise: +$("noise").value, seed: +$("seed").value || 0 };
+}
+
+function showParams(p) {
+  $("nv").textContent = p.n; $("sxv").textContent = fmt(p.sx); $("syv").textContent = fmt(p.sy);
+  $("anv").textContent = `${p.angle}°`; $("nov").textContent = fmt(p.noise);
+}
+
+function fitView() {
+  const m = pts.reduce((s, p) => Math.max(s, Math.abs(p[0]), Math.abs(p[1])), 0);
+  R = Math.max(6, 2 * Math.ceil((m * 1.1 + 0.5) / 2));
+}
+
+function generate() {
+  const p = params();
+  showParams(p);
+  pts = generateCloud(p);
+  fitView();
+  update();
+}
+
+function update() {
+  res = pca2(pts);
+  draw();
+  drawStrip();
+  renderText();
+}
+
+function geometry() {
+  const cv = $("plane");
+  const w = Math.max(240, cv.getBoundingClientRect().width || 600);
+  const S = w / (2 * R);
+  return { cv, w, S, P: (p) => [w / 2 + p[0] * S, w / 2 - p[1] * S] };
+}
+
+function draw() {
+  const { cv, w, S, P } = geometry();
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, w);
+  const text = css("--text-2"), grid = css("--grid"), ink = css("--text"), c0 = css("--c0"), c1 = css("--c1"), c2 = css("--c2"), c3 = css("--c3");
+  const stepGrid = R <= 8 ? 1 : R <= 16 ? 2 : 5;
+  g.lineWidth = 1; g.font = "500 11px " + getComputedStyle(document.body).fontFamily; g.fillStyle = text; g.textBaseline = "top"; g.textAlign = "left";
+  for (let v = -Math.floor(R / stepGrid) * stepGrid; v <= R; v += stepGrid) {
+    g.strokeStyle = v === 0 ? text : grid;
+    g.beginPath(); g.moveTo(...P([v, -R])); g.lineTo(...P([v, R])); g.stroke();
+    g.beginPath(); g.moveTo(...P([-R, v])); g.lineTo(...P([R, v])); g.stroke();
+    if (v !== 0) { g.fillText(String(v), P([v, 0])[0] + 2, P([v, 0])[1] + 2); g.fillText(String(v), P([0, v])[0] + 3, P([0, v])[1] + 2); }
+  }
+  const line = (a, b, color, width, dash = []) => {
+    g.strokeStyle = color; g.lineWidth = width; g.setLineDash(dash);
+    g.beginPath(); g.moveTo(...P(a)); g.lineTo(...P(b)); g.stroke(); g.setLineDash([]);
+  };
+  const arrow = (from, to, color, width) => {
+    const [x0, y0] = P(from), [x1, y1] = P(to);
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    if (len < 2) return;
+    g.strokeStyle = color; g.fillStyle = color; g.lineWidth = width;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    const ang = Math.atan2(y1 - y0, x1 - x0), L = Math.min(10, len * 0.5);
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x1 - L * Math.cos(ang - 0.4), y1 - L * Math.sin(ang - 0.4)); g.lineTo(x1 - L * Math.cos(ang + 0.4), y1 - L * Math.sin(ang + 0.4)); g.closePath(); g.fill();
+  };
+  const { mean, lambda, w: axes, pc, ols } = res;
+  const have = res.n >= 1;
+  // the scatter ellipse: x = mean + 2 sqrt(l1) cos(t) w1 + 2 sqrt(l2) sin(t) w2, a circle when the axes are not defined
+  if ($("showEllipse").checked && res.status !== "zero") {
+    const u = axes ? axes[0] : [1, 0], v = axes ? axes[1] : [0, 1];
+    const a = RADIUS * Math.sqrt(lambda[0]), b = RADIUS * Math.sqrt(lambda[1]);
+    g.strokeStyle = text; g.lineWidth = 1.6; g.setLineDash([5, 4]); g.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const t = 2 * Math.PI * i / 120;
+      const p = [mean[0] + a * Math.cos(t) * u[0] + b * Math.sin(t) * v[0], mean[1] + a * Math.cos(t) * u[1] + b * Math.sin(t) * v[1]];
+      i ? g.lineTo(...P(p)) : g.moveTo(...P(p));
+    }
+    g.stroke(); g.setLineDash([]);
+  }
+  if ($("showOls").checked && ols) {
+    g.globalAlpha = 0.55;
+    for (const p of pts) line(p, [p[0], ols.intercept + ols.slope * p[0]], c3, 1);
+    g.globalAlpha = 1;
+    line([-R, ols.intercept - ols.slope * R], [R, ols.intercept + ols.slope * R], c3, 2);
+  }
+  if ($("showPerp").checked && pc) {
+    g.globalAlpha = 0.6;
+    pts.forEach((p, i) => line(p, res.projections[i], c1, 1));
+    g.globalAlpha = 1;
+  }
+  if (pc && ($("showPerp").checked || $("showProj").checked)) {
+    line([mean[0] - 3 * R * axes[0][0], mean[1] - 3 * R * axes[0][1]], [mean[0] + 3 * R * axes[0][0], mean[1] + 3 * R * axes[0][1]], c1, 1.2, [3, 3]);
+  }
+  g.fillStyle = c0;
+  for (const p of pts) { const [x, y] = P(p); g.beginPath(); g.arc(x, y, 3.6, 0, 2 * Math.PI); g.fill(); }
+  if ($("showProj").checked && pc) {
+    g.strokeStyle = ink; g.lineWidth = 1.4;
+    for (const q of res.projections) { const [x, y] = P(q); g.beginPath(); g.arc(x, y, 3.6, 0, 2 * Math.PI); g.stroke(); }
+  }
+  if ($("showAxes").checked && axes) {
+    const tip = (j, k) => [mean[0] + RADIUS * Math.sqrt(lambda[j]) * axes[j][0], mean[1] + RADIUS * Math.sqrt(lambda[j]) * axes[j][1]];
+    arrow(mean, tip(1), c2, 2.6);
+    arrow(mean, tip(0), c1, 2.6);
+    g.fillStyle = c1; g.textBaseline = "middle";
+    const [lx, ly] = P(tip(0)); g.fillText("w¹", lx + 7, ly - 9);
+    g.fillStyle = c2;
+    const [mx, my] = P(tip(1)); g.fillText("w²", mx + 7, my - 9);
+  }
+  if (have) {
+    const [cx, cy] = P(mean);
+    g.strokeStyle = ink; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(cx - 6, cy); g.lineTo(cx + 6, cy); g.moveTo(cx, cy - 6); g.lineTo(cx, cy + 6); g.stroke();
+  }
+}
+
+function drawStrip() {
+  const sec = $("stripSec");
+  const on = $("showProj").checked;
+  sec.hidden = !on;
+  if (!on) return;
+  const cv = $("strip");
+  const w = Math.max(240, cv.getBoundingClientRect().width || 600), h = 64;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const text = css("--text-2"), ink = css("--text"), c0 = css("--c0"), c1 = css("--c1");
+  g.font = "500 11px " + getComputedStyle(document.body).fontFamily; g.textBaseline = "top"; g.fillStyle = text; g.textAlign = "center";
+  if (!res.pc) { g.textAlign = "left"; g.fillText("Первая компонента не определена", 8, 8); return; }
+  const T = Math.max(1e-9, ...res.coords.map(Math.abs)) * 1.1;
+  const X = (t) => w / 2 + t / T * (w / 2 - 14);
+  g.strokeStyle = text; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(8, 36); g.lineTo(w - 8, 36); g.stroke();
+  g.fillText("0", X(0), 42); g.fillText(fmt(-T / 1.1).replace(/^−?0$/, "0"), X(-T / 1.1), 42); g.fillText(fmt(T / 1.1), X(T / 1.1), 42);
+  g.globalAlpha = 0.5; g.fillStyle = c0;
+  for (const t of res.coords) { g.beginPath(); g.arc(X(t), 36, 3.6, 0, 2 * Math.PI); g.fill(); }
+  g.globalAlpha = 1;
+  g.strokeStyle = ink; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(X(0), 26); g.lineTo(X(0), 46); g.stroke();
+  g.fillStyle = c1; g.textAlign = "left"; g.fillText("w¹", 8, 8);
+}
+
+function statusText() {
+  const n = res.n;
+  if (n === 0) return "Точек нет: щёлкни по плоскости или создай облако";
+  if (n === 1) return "Одна точка: ковариации нет, потому что N − 1 = 0, и главных осей тоже";
+  if (res.status === "zero") return "Все точки совпадают: C = 0, разброса нет, главных осей нет";
+  if (res.status === "round") return "λ₁ = λ₂: облако круглое, ось w¹ не определена, любое направление главное. Вместо эллипса нарисован круг";
+  if (res.lambda[1] <= 1e-12 * res.lambda[0]) return "Все точки лежат на одной прямой: λ₂ = 0, первая компонента объясняет 100 % дисперсии";
+  return "";
+}
+
+function renderText() {
+  $("status").textContent = statusText();
+  const { n, mean, C, lambda, w, explained } = res;
+  const vec = (v) => `(${fmt(v[0])}; ${fmt(v[1])})`;
+  const rows = [["Число точек N", String(n)], ["Центр масс", n ? vec(mean) : "—"]];
+  rows.push(["λ₁", n > 1 ? fmt(lambda[0]) : "—"], ["λ₂", n > 1 ? fmt(lambda[1]) : "—"]);
+  rows.push(["w¹", w ? vec(w[0]) : "не определён"], ["w²", w ? vec(w[1]) : "не определён"]);
+  rows.push(["Доля объяснённой дисперсии λ₁ / (λ₁ + λ₂)",explained === null ? "—" : `${fmt(explained * 100)} %`]);
+  $("numbers").innerHTML = rows.map(([p, q]) => `<span>${p}</span><span>${q}</span>`).join("");
+  $("cmat").innerHTML = `C = X<sup>T</sup>X / (N − 1) = <table class="cmat" style="display:inline-table"><tr><td>${fmt(C[0])}</td><td>${fmt(C[1])}</td></tr><tr><td>${fmt(C[2])}</td><td>${fmt(C[3])}</td></tr></table>`;
+  renderSums();
+}
+
+function renderSums() {
+  const { pc, ols } = res;
+  const cell = (v, win) => `<td class="${win ? "win" : "lose"}">${v === null ? "—" : fmt(v)}</td>`;
+  const both = pc && ols && pc.vert !== null;
+  const row = (name, s, perpWin, vertWin) => `<tr><td>${name}</td>${s ? cell(s.perp, perpWin) + cell(s.vert, vertWin) : "<td>—</td><td>—</td>"}</tr>`;
+  const perpWin = both ? pc.perp <= ols.perp : true, vertWin = both ? ols.vert <= pc.vert : true;
+  $("sums").innerHTML = `<table class="sums"><tr><th>Прямая</th><th>Σ перпендикуляров²</th><th>Σ вертикальных отклонений²</th></tr>`
+    + row("первой компоненты", pc, perpWin, !vertWin)
+    + row("МНК, y по x", ols, !perpWin, vertWin) + "</table>";
+  let note = "";
+  if (res.n >= 2 && !ols) note = "Прямой МНК нет: все x совпадают, вертикальная прямая не график функции y(x)";
+  else if (pc && pc.vert === null) note = "Прямая первой компоненты вертикальна: отклонений по оси y у неё нет";
+  else if (both) note = `Перпендикуляры меньше у прямой первой компоненты, вертикальные отклонения у прямой МНК. Σ перпендикуляров² = (N − 1)·λ₂ = ${fmt((res.n - 1) * res.lambda[1])}`;
+  $("sumsNote").textContent = note;
+}
+
+// ---- pointer: add, drag, delete
+
+function toPlane(ev) {
+  const r = $("plane").getBoundingClientRect();
+  return [((ev.clientX - r.left) / r.width * 2 - 1) * R, (1 - (ev.clientY - r.top) / r.height * 2) * R];
+}
+
+function nearest(ev) {
+  const { S, P } = geometry();
+  const r = $("plane").getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  let best = -1, bd = HIT;
+  pts.forEach((p, i) => { const q = P(p); const d = Math.hypot(q[0] - x, q[1] - y); if (d <= bd) { bd = d; best = i; } });
+  return best;
+}
+
+const clamp = (p) => [Math.max(-R, Math.min(R, p[0])), Math.max(-R, Math.min(R, p[1]))];
+
+$("plane").addEventListener("pointerdown", (ev) => {
+  const i = nearest(ev);
+  if ($("modeDelete").checked) {
+    if (i >= 0) { pts.splice(i, 1); update(); }
+    return;
+  }
+  $("plane").setPointerCapture(ev.pointerId);
+  if (i >= 0) drag = i;
+  else { pts.push(clamp(toPlane(ev))); drag = pts.length - 1; }
+  update();
+});
+$("plane").addEventListener("pointermove", (ev) => {
+  if (drag < 0) return;
+  pts[drag] = clamp(toPlane(ev));
+  update();
+});
+const release = () => { drag = -1; };
+$("plane").addEventListener("pointerup", release);
+$("plane").addEventListener("pointercancel", release);
+
+// ---- controls
+
+["n", "sx", "sy", "angle", "noise", "seed"].forEach((id) => $(id).addEventListener("input", generate));
+$("fresh").addEventListener("click", () => { $("seed").value = String(Math.floor(Math.random() * 1000000)); generate(); });
+$("clear").addEventListener("click", () => { pts = []; update(); });
+["showAxes", "showEllipse", "showPerp", "showOls", "showProj"].forEach((id) => $(id).addEventListener("input", () => { draw(); drawStrip(); }));
+window.addEventListener("resize", () => { draw(); drawStrip(); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { draw(); drawStrip(); });
+
+generate();
+</script>
+</body>
+</html>

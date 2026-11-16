@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница переобучения</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница переобучения</h1>
+  <p class="lead">Полином степени d по методу наименьших квадратов на 28 точках обучения (залитые), качество — на 12 точках теста (полые). Внизу ошибка от степени: обучающая падает всегда, тестовая сначала падает, потом растёт</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="fit" width="640" height="380" aria-label="Подогнанный полином"></canvas>
+      <canvas id="curve" width="640" height="260" aria-label="Ошибка от степени"></canvas>
+    </div>
+    <div class="panel">
+      <label>Степень полинома d: <b id="dv"></b>
+        <input id="deg" type="range" min="0" max="15" value="3">
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="score" id="score"></div>
+      <div class="legend"><span><i style="background:var(--model)"></i>полином</span><span><i style="background:var(--train)"></i>train</span><span><i style="background:var(--test)"></i>test</span><span><i style="background:var(--text-2)"></i>истинная sin 2πx</span></div>
+      <p class="note">d = 0 — константа: недообучение. Дальше обучающая ошибка падает с каждой степенью, а тестовая перестаёт падать и растёт: полином начинает подгоняться под шум и раскачиваться между точками — переобучение. Где именно растёт тест, зависит от выборки</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const d = DATA.reg1d;
+const DEGS = Array.from({ length: 16 }, (_, k) => k);
+
+function fit(deg) {
+  if (deg === 0) {
+    const b = d.ytr.reduce((s, v) => s + v, 0) / d.ytr.length;
+    return { predict: () => b };
+  }
+  const m = fitLinear(d.Xtr, d.ytr, { degree: deg, penalty: "ols" });
+  return { predict: (x) => linearPredict(m, x) };
+}
+const mse = (m, X, y) => X.reduce((s, x, i) => s + (m.predict(x) - y[i]) ** 2, 0) / X.length;
+const MODELS = DEGS.map(fit);
+const ERR = DEGS.map((k) => [mse(MODELS[k], d.Xtr, d.ytr), mse(MODELS[k], d.Xte, d.yte)]);
+
+function draw() {
+  const deg = +$("deg").value, m = MODELS[deg];
+  $("dv").textContent = deg;
+  const cv = $("fit"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.02, 1.02], [-2, 2]);
+  axes(ctx, f, { xticks: [0, 0.5, 1], yticks: [-2, -1, 0, 1, 2], fmt: (t) => toComma(t, null), xlabel: "x", ylabel: "y" });
+  ctx.save(); ctx.beginPath(); ctx.rect(f.ml, f.mt, f.W, f.H); ctx.clip();
+  const xs = Array.from({ length: 400 }, (_, i) => -0.02 + (1.04 * i) / 399);
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(Math.sin(2 * Math.PI * x))]), css("--text-2"), 1.5, [5, 4]);
+  polyline(ctx, xs.map((x) => [f.px(x), f.py(m.predict([x]))]), css("--model"), 2.5);
+  d.Xtr.forEach((x, i) => dot(ctx, f.px(x[0]), f.py(d.ytr[i]), css("--train")));
+  if ($("showTest").checked) d.Xte.forEach((x, i) => dot(ctx, f.px(x[0]), f.py(d.yte[i]), css("--test"), { hollow: true }));
+  ctx.restore();
+
+  const cc = $("curve"), cx = cc.getContext("2d");
+  cx.clearRect(0, 0, cc.width, cc.height);
+  // Log scale: test error at high degree is orders of magnitude above train.
+  const lo = -3, hi = 1;
+  const g = frame(cc, [-0.5, 15.5], [lo, hi], { margin: [52, 28, 14, 44] });
+  axes(cx, g, { xticks: [0, 3, 6, 9, 12, 15], yticks: [-3, -2, -1, 0, 1], xlabel: "степень d", ylabel: "MSE, лог. шкала", yfmt: (t) => num(10 ** t) });
+  const ly = (v) => g.py(Math.max(lo, Math.min(hi, Math.log10(v))));
+  cx.save(); cx.beginPath(); cx.rect(g.ml, g.mt, g.W, g.H); cx.clip();
+  polyline(cx, DEGS.map((k) => [g.px(k), ly(ERR[k][0])]), css("--train"), 2);
+  polyline(cx, DEGS.map((k) => [g.px(k), ly(ERR[k][1])]), css("--test"), 2);
+  DEGS.forEach((k) => { dot(cx, g.px(k), ly(ERR[k][0]), css("--train"), { r: 3.5 }); dot(cx, g.px(k), ly(ERR[k][1]), css("--test"), { r: 3.5 }); });
+  cx.restore();
+  cx.strokeStyle = css("--mark"); cx.setLineDash([4, 4]); cx.beginPath(); cx.moveTo(g.px(deg), g.mt); cx.lineTo(g.px(deg), g.mt + g.H); cx.stroke(); cx.setLineDash([]);
+
+  $("score").innerHTML =
+    `<span>MSE на обучении</span><span>${num(ERR[deg][0])}</span>` +
+    `<span>MSE на тесте</span><span>${num(ERR[deg][1])}</span>`;
+}
+
+["deg", "showTest"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

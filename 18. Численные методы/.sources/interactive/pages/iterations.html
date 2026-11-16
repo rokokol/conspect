@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница итерационных методов</title>
+<style>
+/*COMMON_CSS*/
+.agrid { display: grid; gap: 4px; }
+.agrid input { text-align: right; padding: 4px 3px; font-size: 13px; min-width: 0; }
+.agrid .sep { color: var(--text-2); text-align: center; align-self: center; }
+.mtab td, .mtab th { white-space: nowrap; }
+.score span:nth-child(odd) { white-space: normal; }
+.stale { opacity: 0.4; }
+.mtab.sm { width: auto; }
+.main .mtab.sm td { text-align: right; padding: 3px 14px; }
+.sq { aspect-ratio: 1; max-width: 460px; justify-self: center; width: 100%; }
+.twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.verdict { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); border-left: 4px solid var(--ddlc-monika-eye); }
+.verdict.bad { border-left-color: var(--ddlc-series-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница итерационных методов решения СЛАУ</h1>
+  <p class="lead">Система Ax = b решается итерациями (1/τ)B(x<sup>k+1</sup> − x<sup>k</sup>) + Ax<sup>k</sup> = b. Страница строит матрицу перехода S = I − τB<sup>−1</sup>A, считает ρ(S) и показывает, как погрешность следует за ρ<sup>k</sup> и как признаки сходимости связаны с настоящим критерием ρ(S) &lt; 1</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Готовая задача</h2>
+        <select id="preset" aria-label="Готовая задача"></select>
+        <label>Порядок системы n
+          <select id="size"><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+        </label>
+        <p class="note">Смена n загружает tridiag(−1, 2, −1) с правой частью, при которой решение — единицы</p>
+      </div>
+      <div class="sec">
+        <h2>Матрица A и правая часть b</h2>
+        <div class="agrid" id="agrid"></div>
+        <h2>Начальное приближение x⁰</h2>
+        <div class="agrid" id="xgrid"></div>
+        <p class="note">В ячейках числа и формулы: 0,8 или 1/3 или sqrt(2). Умножение пишется знаком *</p>
+        <p class="err" id="err" role="status"></p>
+      </div>
+      <div class="sec">
+        <h2>Метод</h2>
+        <select id="method" aria-label="Метод">
+          <option value="jacobi">Якоби: B = D, τ = 1</option>
+          <option value="seidel">Зейдель: B = D + L, τ = 1</option>
+          <option value="relax">Релаксация: B = D + ωL, τ = ω</option>
+          <option value="explicit">Явный метод: B = I</option>
+        </select>
+        <div id="parBlock">
+          <label><span id="parName">ω</span></label>
+          <div class="ctl"><input id="parSlider" type="range" min="0.02" max="2.4" step="0.01" aria-label="Параметр"><input id="par" type="text" inputmode="decimal" aria-label="Значение параметра"></div>
+        </div>
+        <label>Число шагов
+          <select id="steps"><option>10</option><option selected>30</option><option>60</option><option>120</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <p class="warn" id="stale" role="status" hidden>Ввод с ошибкой: показаны прежние значения</p>
+      <div class="main" id="results">
+      <section>
+        <h2>Сходится ли метод</h2>
+        <p class="verdict" id="verdict" role="status"></p>
+        <div class="score" id="criteria"></div>
+        <p class="note" id="critNote"></p>
+      </section>
+      <section id="sSection">
+        <h2>Матрица перехода S</h2>
+        <div id="smat" style="overflow-x:auto"></div>
+        <p class="note" id="eigs"></p>
+      </section>
+      <section id="errSection">
+        <h2>Погрешность по шагам</h2>
+        <canvas id="errChart" class="wide" role="img" aria-label="График погрешности в логарифмической шкале"></canvas>
+        <div class="legend"><span><i style="background:var(--c1)"></i>max<sub>j</sub>|z<sub>j</sub><sup>k</sup>|</span><span><i style="background:var(--c0)"></i>ρ<sup>k</sup>·|z⁰|</span><span id="legendNorm"><i style="background:var(--c2)"></i>‖S‖<sub>∞</sub><sup>k</sup>·|z⁰|</span></div>
+        <p class="note" id="errNote"></p>
+      </section>
+      <section id="planeSection" hidden>
+        <h2>Траектория на плоскости</h2>
+        <canvas id="plane" class="sq" role="img" aria-label="Траектория приближений на плоскости"></canvas>
+        <div class="legend"><span><i style="background:var(--c0)"></i>уравнение 1</span><span><i style="background:var(--c3)"></i>уравнение 2</span><span><i style="background:var(--c1)"></i>x<sup>k</sup></span></div>
+        <p class="note">Полый кружок — x⁰, чёрный — решение</p>
+      </section>
+      <section id="curveSection">
+        <h2 id="curveTitle">Радиус ρ(S) по параметру</h2>
+        <canvas id="curve" class="wide" role="img" aria-label="Спектральный радиус как функция параметра"></canvas>
+        <div class="legend"><span><i style="background:var(--c1)"></i>ρ(S)</span><span><i style="background:var(--text-2)"></i>граница ρ = 1</span><span><i style="background:var(--c0)"></i>текущее значение</span><span><i style="background:var(--c2)"></i>минимум</span></div>
+        <p class="note" id="curveNote"></p>
+      </section>
+      <section>
+        <h2>Таблица итераций</h2>
+        <div class="scroll"><table class="mtab" id="table"></table></div>
+      </section>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*CHART*/
+/*NMCORE*/
+/*PRESETS*/
+const MAXN = 5;
+const CURVE_POINTS = 160;
+let n = 3;
+let timer = 0;
+const schedule = () => { clearTimeout(timer); timer = setTimeout(update, 100); };
+const num = (x) => sciText(x);
+
+// ---- the form
+
+function buildGrids(size) {
+  n = size;
+  const a = $("agrid");
+  a.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr)) 10px minmax(0, 1fr)`;
+  let html = "";
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= n; j++) html += `<input id="a${i}${j}" aria-label="a, строка ${i} столбец ${j}" inputmode="decimal">`;
+    html += `<span class="sep">|</span><input id="b${i}" aria-label="b, строка ${i}" inputmode="decimal">`;
+  }
+  a.innerHTML = html;
+  const x = $("xgrid");
+  x.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+  x.innerHTML = Array.from({ length: n }, (_, i) => `<input id="x0_${i + 1}" aria-label="x⁰, компонента ${i + 1}" inputmode="decimal">`).join("");
+}
+
+function setProblem(p) {
+  $("size").value = p.A.length;
+  buildGrids(p.A.length);
+  p.A.forEach((row, i) => row.forEach((v, j) => { $(`a${i + 1}${j + 1}`).value = v; }));
+  p.b.forEach((v, i) => { $(`b${i + 1}`).value = v; });
+  p.x0.forEach((v, i) => { $(`x0_${i + 1}`).value = v; });
+}
+
+function tridiagProblem(size) {
+  const A = Array.from({ length: size }, (_, i) => Array.from({ length: size }, (_, j) => (i === j ? "2" : Math.abs(i - j) === 1 ? "-1" : "0")));
+  return { A, b: Array.from({ length: size }, (_, i) => (i === 0 || i === size - 1 ? "1" : "0")), x0: Array(size).fill("0") };
+}
+
+PRESETS.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name; $("preset").appendChild(o); });
+
+// the last value typed for each parameter, so that switching the method back and forth keeps both
+const saved = { omega: "1", tau: "0,5" };
+const keyOf = (method) => (method === "explicit" ? "tau" : "omega");
+
+function showParam() {
+  const key = keyOf($("method").value);
+  syncParamBlock();
+  $("par").value = saved[key];
+  $("parSlider").value = parseDecimal(saved[key]);
+}
+
+function applyMethod(method, omega, tau) {
+  $("method").value = method;
+  saved.omega = omega; saved.tau = tau;
+  showParam();
+}
+
+function parseDecimal(s) { const v = Number(String(s).replace(",", ".")); return Number.isFinite(v) ? v : NaN; }
+
+function syncParamBlock() {
+  const m = $("method").value;
+  $("parBlock").hidden = m === "jacobi" || m === "seidel";
+  $("parName").textContent = m === "explicit" ? "τ" : "ω";
+}
+
+function readNumber(id, what) {
+  const el = $(id);
+  try { const v = evalConstant(el.value); el.removeAttribute("aria-invalid"); return v; } catch (e) { el.setAttribute("aria-invalid", "true"); e.place = what; throw e; }
+}
+
+function readProblem() {
+  document.querySelectorAll("#agrid input, #xgrid input, #par").forEach((el) => el.removeAttribute("aria-invalid"));
+  const A = new Float64Array(n * n), b = new Float64Array(n), x0 = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) A[i * n + j] = readNumber(`a${i + 1}${j + 1}`, `Матрица A, строка ${i + 1}, столбец ${j + 1}`);
+    b[i] = readNumber(`b${i + 1}`, `Правая часть b, компонента ${i + 1}`);
+    x0[i] = readNumber(`x0_${i + 1}`, `Начальное приближение x⁰, компонента ${i + 1}`);
+  }
+  const method = $("method").value;
+  const params = {};
+  if (method === "relax" || method === "explicit") {
+    const p = parseDecimal($("par").value);
+    if (!Number.isFinite(p) || p <= 0) { $("par").setAttribute("aria-invalid", "true"); throw new Error(`Параметр ${method === "relax" ? "ω" : "τ"} должен быть положительным числом`); }
+    params[method === "relax" ? "omega" : "tau"] = p;
+  }
+  return { A, b, x0, method, params };
+}
+
+// ---- drawing helpers
+
+const fmtComplex = (z) => (Math.abs(z.im) < 1e-12 * Math.max(1, Math.abs(z.re)) ? num(z.re) : `${num(z.re)} ${z.im < 0 ? "−" : "+"} ${num(Math.abs(z.im))}i`);
+const sup = (k) => `<sup>${k}</sup>`;
+
+function matrixHtml(S, size) {
+  let html = "<table class=\"mtab sm\"><tbody>";
+  for (let i = 0; i < size; i++) html += `<tr>${Array.from({ length: size }, (_, j) => `<td>${num(S[i * size + j])}</td>`).join("")}</tr>`;
+  return html + "</tbody></table>";
+}
+
+function yesNo(v) { return v ? "да" : "нет"; }
+
+// ---- the update
+
+// After a bad input the results on the right belong to the last good input: dim them and say so
+function markStale(on) {
+  $("stale").hidden = !on;
+  $("results").classList.toggle("stale", on);
+}
+
+function update() {
+  let prob;
+  try {
+    prob = readProblem();
+    $("err").textContent = "";
+  } catch (e) {
+    $("err").textContent = e.pos !== undefined ? describe(e) : e.message;
+    markStale(true);
+    return;
+  }
+  markStale(false);
+  const { A, b, x0, method, params } = prob;
+  const exact = solveExact(A, b, n);
+  const sections = ["sSection", "errSection", "planeSection", "curveSection"];
+  const verdict = $("verdict");
+  if (!exact) {
+    verdict.className = "verdict bad";
+    verdict.textContent = "Матрица A вырождена: решения нет или оно не единственно, итерации сравнивать не с чем";
+    $("criteria").innerHTML = ""; $("critNote").textContent = ""; $("table").innerHTML = "";
+    sections.forEach((id) => { $(id).hidden = true; });
+    return;
+  }
+  let S;
+  try {
+    S = transitionMatrix(A, n, method, params);
+  } catch (e) {
+    verdict.className = "verdict bad";
+    verdict.textContent = `${e.message}. Явный метод с B = I делит только на τ, его можно запустить`;
+    $("criteria").innerHTML = ""; $("critNote").textContent = ""; $("table").innerHTML = "";
+    sections.forEach((id) => { $(id).hidden = true; });
+    return;
+  }
+  sections.forEach((id) => { $(id).hidden = false; });
+  $("planeSection").hidden = n !== 2;
+  $("curveSection").hidden = method === "jacobi";
+
+  const rho = spectralRadius(S, n), sNorm = infNorm(S, n);
+  const q = dominanceQ(A, n);
+  const spd = isSymmetric(A, n) && isPositiveDefinite(A, n);
+  const sam = samarskyHolds(A, n, method, params);
+  const K = +$("steps").value;
+  const xs = iterate(A, b, x0, n, method, params, K);
+  const errs = errorsOf(xs, exact);
+
+  // criteria
+  const rows = [
+    ["Диагональное преобладание, q из (1.4)", q === null ? "нулевая диагональ" : `${num(q)}, ${q < 1 ? "есть" : "нет"}`],
+    ["A симметрична и положительно определена", yesNo(spd)],
+    ["Условие Самарского (2.13)", sam === null ? "не применимо" : sam ? "выполнено" : "не выполнено"],
+    ["ρ(S), критерий теоремы 2", num(rho)],
+    ["‖S‖∞", num(sNorm)],
+    ["Шагов до уменьшения погрешности в 10⁶ раз", rho < 1 ? String(stepsToReduce(rho)) : "метод не сходится"],
+  ];
+  // A criterion's name cites the formula of the textbook, (1.4), whose dot is no decimal one
+  $("criteria").innerHTML = rows.map(([a, c]) => `<span data-keep-dots>${a}</span><span>${c}</span>`).join("");
+  verdict.className = rho < 1 ? "verdict" : "verdict bad";
+  verdict.innerHTML = rho < 1
+    ? `ρ(S) = ${num(rho)} &lt; 1: метод сходится при любом x⁰, погрешность убывает как ρ<sup>k</sup>`
+    : `ρ(S) = ${num(rho)} ≥ 1: метод не сходится при почти любом x⁰, погрешность не убывает`;
+  const notes = [];
+  if (rho < 1 && !(q !== null && q < 1) && (method === "jacobi" || method === "seidel")) notes.push("Диагонального преобладания нет, а метод сходится: преобладание достаточно, но не необходимо");
+  if (sam === true && rho < 1) notes.push("Условие Самарского выполнено, поэтому сходимость гарантирована и без спектра");
+  if (sam === false && rho < 1) notes.push("Условие Самарского нарушено, а метод сходится: оно достаточное, не необходимое");
+  if (method === "jacobi" && spd && rho >= 1) notes.push("A положительно определена, но Якоби расходится; Зейдель и релаксация при 0 < ω < 2 сходятся (теорема 6.1)");
+  if (method === "relax" && sam === false && params.omega >= 2) notes.push("При ω ≥ 2 метод релаксации не сходится (теорема 6.2)");
+  $("critNote").textContent = notes.join(". ");
+
+  // S
+  $("smat").innerHTML = matrixHtml(S, n);
+  let ev = [];
+  try { ev = eigenvalues(S, n); } catch (e) { ev = []; }
+  $("eigs").innerHTML = ev.length ? `Собственные числа S: ${ev.map(fmtComplex).join("; ")}. Радиус ρ(S) — наибольший их модуль` : "Собственные числа S не найдены";
+
+  // error chart
+  const e0 = errs[0];
+  const ks = Array.from({ length: K + 1 }, (_, k) => k);
+  if (e0 > 0) {
+    const rhoLine = ks.map((k) => e0 * rho ** k);
+    const normLine = ks.map((k) => (sNorm < 1 ? e0 * sNorm ** k : NaN));
+    const [lo, hi] = logRange([errs, rhoLine, normLine.filter((v) => v > 1e-30)]);
+    const series = [
+      { xs: ks, ys: rhoLine, color: css("--c0"), width: 1.6, dash: [6, 4] },
+      { xs: ks, ys: normLine, color: css("--c2"), width: 1.4, dash: [2, 3] },
+      { xs: ks, ys: errs, color: css("--c1"), width: 2.2, dots: K <= 60 ? 2.5 : 0 },
+    ];
+    plotLines($("errChart"), { series, xlim: [0, K], ylim: [Math.max(lo, 1e-20), hi], ylog: true });
+    $("errChart").hidden = false;
+    $("legendNorm").hidden = !(sNorm < 1);
+    $("errNote").innerHTML = `Прямая ρ<sup>k</sup>·|z⁰| выходит из начальной погрешности с наклоном ρ(S). Кривая ложится на неё не сразу: у несимметричной S ранние шаги идут своим путём. Ниже 10⁻¹⁵ погрешность задаёт точность решения, с которым сравнивается x<sup>k</sup>`;
+  } else {
+    $("errChart").hidden = true;
+    $("errNote").textContent = "Начальное приближение x⁰ уже равно решению, погрешность нулевая и график пуст";
+  }
+
+  // plane for n = 2
+  if (n === 2) drawPlane(A, b, xs, exact);
+
+  // curve
+  if (method !== "jacobi") drawCurve(A, method, params, spd);
+
+  // table
+  let head = `<thead><tr><th>k</th>${Array.from({ length: n }, (_, j) => `<th>x<sub>${j + 1}</sub><sup>k</sup></th>`).join("")}<th>max|z<sub>j</sub><sup>k</sup>|</th><th>отношение</th></tr></thead>`;
+  let body = xs.map((x, k) => `<tr><td>${k}</td>${Array.from(x, (v) => `<td>${num(v)}</td>`).join("")}<td>${sciHtml(errs[k])}</td><td>${k > 0 && errs[k - 1] > 0 ? num(errs[k] / errs[k - 1]) : "—"}</td></tr>`).join("");
+  $("table").innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+function drawPlane(A, b, xs, exact) {
+  const pts = [xs[0], ...xs.slice(1, 9), exact];
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  const span = Math.max(x1 - x0, y1 - y0, 1e-9) * 1.2, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const xl = [cx - span / 2, cx + span / 2], yl = [cy - span / 2, cy + span / 2];
+  // a line a1 x + a2 y = b as two end points inside the window
+  const lineOf = (a1, a2, rhs) => {
+    if (Math.abs(a2) >= Math.abs(a1)) return { xs: xl, ys: xl.map((x) => (rhs - a1 * x) / a2) };
+    return { xs: yl.map((y) => (rhs - a2 * y) / a1), ys: yl };
+  };
+  const series = [];
+  [[0, "--c0"], [1, "--c3"]].forEach(([i, role]) => {
+    const a1 = A[i * 2], a2 = A[i * 2 + 1];
+    if (a1 !== 0 || a2 !== 0) series.push({ ...lineOf(a1, a2, b[i]), color: css(role), width: 1.5, dash: [6, 4] });
+  });
+  series.push({ xs: xs.map((p) => p[0]), ys: xs.map((p) => p[1]), color: css("--c1"), width: 2, dots: 3 });
+  plotLines($("plane"), { series, xlim: xl, ylim: yl, aspect: 1, points: [{ x: xs[0][0], y: xs[0][1], color: css("--c1"), filled: false }, { x: exact[0], y: exact[1], color: css("--mark"), filled: true }] });
+}
+
+function drawCurve(A, method, params, spd) {
+  const relax = method !== "explicit";
+  let lo = 0.01, hi = 2.4, best, tauInfo = null;
+  if (!relax) {
+    tauInfo = spd ? optimalTau(A, n) : null;
+    let scale = tauInfo ? tauInfo.M : 0;
+    if (!tauInfo) for (let i = 0; i < n; i++) { let s = 0; for (let j = 0; j < n; j++) s += Math.abs(A[i * n + j]); scale = Math.max(scale, s); }
+    hi = 2.4 / (scale || 1);
+    lo = hi / 240;
+  }
+  const grid = Array.from({ length: CURVE_POINTS + 1 }, (_, i) => lo + (hi - lo) * i / CURVE_POINTS);
+  const rhos = radiusCurve(A, n, relax ? "relax" : "explicit", grid);
+  best = bestParameter(A, n, relax ? "relax" : "explicit", relax ? 0.001 : lo, relax ? 1.999 : hi);
+  const cur = relax ? (method === "seidel" ? 1 : params.omega) : params.tau;
+  const curRho = spectralRadius(transitionMatrix(A, n, relax ? "relax" : "explicit", relax ? { omega: cur } : { tau: cur }), n);
+  const top = Math.max(1.3, Math.min(2, Math.max(...rhos.filter(Number.isFinite))));
+  const name = relax ? "ω" : "τ";
+  $("curveTitle").innerHTML = relax ? "Радиус ρ(S<sub>ω</sub>) по параметру ω" : "Радиус ρ(S<sub>τ</sub>) по параметру τ";
+  plotLines($("curve"), {
+    series: [{ xs: [lo, hi], ys: [1, 1], color: css("--text-2"), width: 1, dash: [3, 3] }, { xs: grid, ys: rhos, color: css("--c1"), width: 2.2 }],
+    xlim: [lo, hi], ylim: [0, top],
+    vlines: [{ x: cur, color: css("--c0") }, { x: best.param, color: css("--c2") }],
+    points: [{ x: best.param, y: best.rho, color: css("--mark"), filled: true }, ...(Number.isFinite(curRho) && curRho <= top ? [{ x: cur, y: curRho, color: css("--c0"), filled: false }] : [])],
+  });
+  const lines = [];
+  lines.push(best.rho < 1 ? `Наименьшее ρ ≈ ${num(best.rho)} при ${name} ≈ ${num(best.param)}` : `При всех ${name} из этого промежутка ρ(S) ≥ 1: метод не сходится`);
+  if (relax) lines.push(method === "seidel" ? "Зейдель — это ω = 1" : `Сейчас ω = ${num(cur)}, ρ = ${num(curRho)}`);
+  else lines.push(`Сейчас τ = ${num(cur)}, ρ = ${num(curRho)}`);
+  if (tauInfo) lines.push(`Для B = I и положительно определённой A: m = ${num(tauInfo.m)}, M = ${num(tauInfo.M)}, τ₀ = 2/(M + m) = ${num(tauInfo.tau)}, ρ = (M − m)/(M + m) = ${num(tauInfo.rho)}, метод сходится при 0 < τ < 2/M = ${num(2 / tauInfo.M)}`);
+  $("curveNote").textContent = lines.join(". ");
+}
+
+// ---- events
+
+$("preset").addEventListener("input", () => { const p = PRESETS[+$("preset").value]; setProblem(p); applyMethod(p.method, p.omega, p.tau); update(); });
+$("size").addEventListener("input", () => { setProblem(tridiagProblem(+$("size").value)); update(); });
+$("method").addEventListener("input", () => { showParam(); update(); });
+$("parSlider").addEventListener("input", () => {
+  $("par").value = String($("parSlider").value).replace(".", ",");
+  saved[keyOf($("method").value)] = $("par").value;
+  update();
+});
+$("par").addEventListener("input", () => {
+  const v = parseDecimal($("par").value);
+  if (Number.isFinite(v)) $("parSlider").value = v;
+  saved[keyOf($("method").value)] = $("par").value;
+  schedule();
+});
+$("steps").addEventListener("input", update);
+$("agrid").addEventListener("input", schedule);
+$("xgrid").addEventListener("input", schedule);
+window.addEventListener("resize", update);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+
+setProblem(PRESETS[0]);
+applyMethod(PRESETS[0].method, PRESETS[0].omega, PRESETS[0].tau);
+update();
+</script>
+</body>
+</html>

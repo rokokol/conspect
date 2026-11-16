@@ -1,0 +1,3 @@
+/* The look of the kernel editor on the Fredholm pages: roles over sandbox_kit's, no hex here. The fields are sandbox_kit's, the layout is numkit's kernel-editor.css. */
+.krow .kn, .krow .kd { color: var(--text-2); }
+.fld { display: block; }

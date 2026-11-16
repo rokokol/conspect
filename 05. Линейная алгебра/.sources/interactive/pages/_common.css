@@ -1,0 +1,7 @@
+/* Roles shared by the linear algebra pages, over sandbox_kit's page.css: no hex here. */
+.wrap { grid-template-columns: 300px minmax(0, 1fr); }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+h2 { margin: 0 0 8px; border: 0; padding: 0; }
+.panel h2 { margin: 0; }
+.main td, .main th { text-align: right; }
+.main td:first-child, .main th:first-child { text-align: left; }

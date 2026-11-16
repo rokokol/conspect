@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница AdaBoost</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .pair { grid-template-columns: 1fr; } }
+.cap { font-size: 13px; line-height: 18px; color: var(--text-2); margin: 0 0 4px; height: 36px; overflow: hidden; }
+.cap sub, .cap sup { line-height: 0; }
+.score span:nth-child(odd) { white-space: normal; }
+.score span:nth-child(even) { white-space: nowrap; }
+.cap b { color: var(--text); font-weight: normal; }
+.legend i.dotc { width: 9px; height: 9px; border-radius: 50%; vertical-align: baseline; }
+.legend i.ring { width: 11px; height: 11px; border-radius: 50%; background: none; border: 2px solid var(--mark); vertical-align: middle; }
+canvas.square { cursor: crosshair; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница AdaBoost</h1>
+  <p class="lead">Пни по очереди: каждый учится на объектах с весами e<sup>−M</sup>, где M — отступ уже построенной части ансамбля. Листайте шаги t: слева пень шага t и веса перед ним, справа сумма первых t пней. Щелчок по точке слева показывает её отступ и вес</p>
+  <div class="wrap">
+    <div class="plots">
+      <div class="pair">
+        <div>
+          <p class="cap" id="cap1"></p>
+          <canvas id="step" class="square" width="480" height="480" aria-label="Пень шага t и веса объектов"></canvas>
+        </div>
+        <div>
+          <p class="cap" id="cap2"></p>
+          <canvas id="sum" class="square" width="480" height="480" aria-label="Зоны суммы пней"></canvas>
+        </div>
+      </div>
+      <canvas id="err" width="640" height="220" aria-label="Ошибка по числу пней"></canvas>
+      <canvas id="loss" width="640" height="220" aria-label="Экспоненциальная потеря по числу пней"></canvas>
+      <canvas id="rho" width="640" height="200" aria-label="Вес каждого пня"></canvas>
+    </div>
+    <div class="panel">
+      <label>Набор данных
+        <select id="ds">
+          <option value="moons">moons</option>
+          <option value="circles">circles</option>
+          <option value="xor">xor</option>
+          <option value="linear">linear</option>
+        </select>
+      </label>
+      <label>Шаг t (пней в сумме): <b id="tv"></b>
+        <input id="t" type="range" min="1" max="1" value="3">
+      </label>
+      <label class="row"><input id="test" type="checkbox" checked> показать test справа</label>
+      <div class="score" id="score"></div>
+      <div class="legend">
+        <span><i class="dotc" style="background:var(--c0)"></i>класс 0 (−1)</span>
+        <span><i class="dotc" style="background:var(--c1)"></i>класс 1 (+1)</span>
+        <span><i class="ring"></i>пень ошибся</span>
+        <span><i style="background:var(--mark)"></i>порог пня</span>
+      </div>
+      <p class="note">Площадь точки слева пропорциональна весу, а вес — это e<sup>−M</sup>, делённая на среднее. Справа залитые точки — train, полые — test. Цвет зоны справа — знак суммы ∑ρ<sub>t</sub>h<sub>t</sub>, насыщенность растёт с её модулем</p>
+      <p class="note" id="stopnote"></p>
+      <p class="note">Формулы показаны как разбор шага, а не как проверка: множитель потери 2√(ε(1−ε)) и ошибка ½ на новых весах верны при любых весах по построению, поэтому в таблице они просто считаются</p>
+      <p class="note">Сверка с sklearn идёт в тестах: <span id="mt"></span> пней <code>DecisionTreeClassifier(max_depth=1)</code> в <code>AdaBoostClassifier</code> дают те же ε, веса и предсказания</p>
+      <p class="note">Вес пня здесь ρ = ½ ln((1−ε)/ε), как в заметке; sklearn (SAMME) хранит α = ln((1−ε)/ε) = 2ρ и умножает веса только ошибочных объектов на e<sup>α</sup>: после нормировки веса те же, знак суммы тот же</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const MAX_T = 100;
+$("mt").textContent = MAX_T;
+let cache = {};
+let selected = null;   // index of the train object picked by a click
+
+function fitFor(ds) {
+  if (cache[ds]) return cache[ds];
+  const d = DATA[ds];
+  const model = fitAdaBoost(d.Xtr, d.ytr, { nEstimators: MAX_T });
+  const T = model.trees.length;
+  // Per number of stumps k = 1..T: errors and mean exponential losses.
+  const sgn = (y) => y.map((v) => 2 * v - 1);
+  const run = (X, y) => {
+    const s = sgn(y), F = X.map(() => 0), err = [], loss = [];
+    for (let t = 0; t < T; t++) {
+      X.forEach((x, i) => (F[i] += model.rho[t] * adaStumpVote(model, t, x)));
+      err.push(F.filter((f, i) => (f > 0 ? 1 : 0) !== y[i]).length / X.length);
+      loss.push(F.reduce((a, f, i) => a + Math.exp(-s[i] * f), 0) / X.length);
+    }
+    return { err, loss };
+  };
+  return (cache[ds] = { d, model, T, tr: run(d.Xtr, d.ytr), te: run(d.Xte, d.yte) });
+}
+
+const stumpText = (tree) => (tree.left ? `x<sub>${tree.feature + 1}</sub> ≤ ${num(tree.threshold)}` : "константа");
+const fmtN = (v) => num(v, 3);
+
+function drawStep(c, t) {
+  const { d, model } = c, cv = $("step"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const v = dataView(cv, d), cols = classColors(2), tree = model.trees[t - 1], w = model.weights[t - 1];
+  const vote = (x) => 2 * treePredict(tree, x) - 1;
+  drawClassifier(ctx, v, { Xtr: [], Xte: [] }, (x) => (vote(x) > 0 ? [0.25, 0.75] : [0.75, 0.25]), [0, 1], { N: 64, outline: false });
+  if (tree.left) {
+    const a = tree.feature === 0 ? [[tree.threshold, v.lo[1]], [tree.threshold, v.hi[1]]] : [[v.lo[0], tree.threshold], [v.hi[0], tree.threshold]];
+    polyline(ctx, a.map((p) => v.toPx(p)), css("--mark"), 2.5);
+  }
+  const n = d.Xtr.length;
+  const order = d.Xtr.map((_, i) => i).sort((p, q) => w[q] - w[p]);
+  for (const i of order) {
+    const [px, py] = v.toPx(d.Xtr[i]);
+    const r = Math.max(1.5, Math.min(22, 5.5 * Math.sqrt(w[i] * n)));
+    dot(ctx, px, py, `rgb(${cols[d.ytr[i]]})`, { r });
+    const wrong = vote(d.Xtr[i]) !== 2 * d.ytr[i] - 1;
+    if (wrong || i === selected) {
+      ctx.save();
+      ctx.strokeStyle = css("--mark"); ctx.lineWidth = i === selected ? 3 : 1.5;
+      ctx.beginPath(); ctx.arc(px, py, r + (i === selected ? 5 : 3), 0, 2 * Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+function drawSum(c, t) {
+  const { d, model } = c, cv = $("sum"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const v = dataView(cv, d);
+  // The tint is tanh(F), the confidence of the summed vote; F = 0 stays grey.
+  const proba = (x) => { const f = adaScore(model, x, t); return f === 0 ? null : [0.5 - 0.5 * Math.tanh(f), 0.5 + 0.5 * Math.tanh(f)]; };
+  drawClassifier(ctx, v, d, proba, [0, 1], { N: 72, showTest: $("test").checked });
+}
+
+function chart(id, c, { ylim, yticks, yfmt, ylabel, xlim }) {
+  const cv = $(id), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, xlim, ylim, { margin: [52, 28, 136, 42] });
+  axes(ctx, f, { xticks: countTicks(c.T), yticks, yfmt, xlabel: "число пней T", ylabel });
+  return [f, ctx];
+}
+
+function markT(ctx, f, t) {
+  ctx.save();
+  ctx.strokeStyle = css("--mark"); ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(f.px(t), f.mt); ctx.lineTo(f.px(t), f.mt + f.H); ctx.stroke();
+  ctx.restore();
+}
+
+function drawCharts(c, t) {
+  const ks = Array.from({ length: c.T }, (_, k) => k + 1), xlim = [1, Math.max(c.T, 2)];
+  // error of the ensemble
+  {
+    const [f, ctx] = chart("err", c, { xlim, ylim: [0, 0.5], yticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5], yfmt: num, ylabel: "доля ошибок ансамбля" });
+    const tr = ks.map((k) => [f.px(k), f.py(c.tr.err[k - 1])]), te = ks.map((k) => [f.px(k), f.py(c.te.err[k - 1])]);
+    polyline(ctx, tr, css("--train"), 2); polyline(ctx, te, css("--test"), 2);
+    markT(ctx, f, t);
+    endLabels(ctx, f, [
+      { text: "train", y: tr[c.T - 1][1], look: { col: "--train", w: 2 } },
+      { text: "test", y: te[c.T - 1][1], look: { col: "--test", w: 2 } },
+    ]);
+  }
+  // mean exponential loss, log scale
+  {
+    const all = [...c.tr.loss, ...c.te.loss];
+    const lo = Math.floor(Math.log10(Math.min(...all))), hi = Math.ceil(Math.log10(Math.max(1, ...all)));
+    const [f, ctx] = chart("loss", c, { xlim, ylim: [lo, hi], yticks: logTicks(lo, hi), yfmt: (q) => num(10 ** q), ylabel: "средняя потеря e⁻ᴹ, лог. шкала" });
+    const ly = (v) => f.py(Math.log10(v));
+    const tr = ks.map((k) => [f.px(k), ly(c.tr.loss[k - 1])]), te = ks.map((k) => [f.px(k), ly(c.te.loss[k - 1])]);
+    polyline(ctx, tr, css("--text-2"), 2); polyline(ctx, te, css("--text-2"), 2, [5, 4]);
+    markT(ctx, f, t);
+    endLabels(ctx, f, [
+      { text: "train", y: tr[c.T - 1][1], look: { col: "--text-2", w: 2 } },
+      { text: "test", y: te[c.T - 1][1], look: { col: "--text-2", w: 2, dash: [5, 4] } },
+    ]);
+  }
+  // weight of every stump
+  {
+    const rmax = Math.max(...c.model.rho);
+    const [f, ctx] = chart("rho", c, { xlim: [0.5, c.T + 0.5], ylim: [0, rmax * 1.1], yticks: [0, rmax / 2, rmax], yfmt: num, ylabel: "вес пня ρₜ = ½ ln((1−ε)/ε)" });
+    const bw = Math.max(1, f.W / c.T - 1);
+    ks.forEach((k) => {
+      ctx.fillStyle = css(k === t ? "--mark" : "--text-2");
+      ctx.globalAlpha = k === t ? 1 : 0.55;
+      const h = (c.model.rho[k - 1] / (rmax * 1.1)) * f.H;
+      ctx.fillRect(f.px(k) - bw / 2, f.mt + f.H - h, bw, h);
+    });
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawScore(c, t) {
+  const { d, model } = c, e = model.eps[t - 1], r = model.rho[t - 1];
+  const loss = (k) => (k === 0 ? 1 : c.tr.loss[k - 1]);
+  // Weights after the update, measured on the weights the next stump would get.
+  const sgn = d.ytr.map((y) => 2 * y - 1), vote = d.Xtr.map((x) => adaStumpVote(model, t - 1, x));
+  const nxt = model.weights[t - 1].map((w, i) => w * Math.exp(-r * sgn[i] * vote[i]));
+  const z = nxt.reduce((s, v) => s + v, 0);
+  const half = nxt.reduce((s, v, i) => s + (vote[i] !== sgn[i] ? v : 0), 0) / z;
+  const perfect = e === 0;
+  let h =
+    `<span>пень</span><span>${stumpText(model.trees[t - 1])}</span>` +
+    `<span>ε<sub>t</sub> взвеш. ошибка</span><span>${fmtN(e)}</span>` +
+    `<span>ρ<sub>t</sub> вес пня</span><span>${perfect ? "∞ → ½" : fmtN(r)}</span>` +
+    `<span>α<sub>t</sub> в sklearn, 2ρ<sub>t</sub></span><span>${fmtN(2 * r)}</span>` +
+    `<span>множитель потери 2√(ε(1−ε))</span><span>${fmtN(2 * Math.sqrt(e * (1 - e)))}</span>` +
+    `<span>средняя потеря до → после</span><span>${fmtN(loss(t - 1))} → ${fmtN(loss(t))}</span>` +
+    `<span>ошибка пня на новых весах</span><span>${perfect ? "—" : fmtN(half)}</span>` +
+    `<span>доля ошибок train</span><span>${fmtN(c.tr.err[t - 1])}</span>` +
+    `<span>доля ошибок test</span><span>${fmtN(c.te.err[t - 1])}</span>`;
+  if (selected !== null) {
+    const x = d.Xtr[selected], y = sgn[selected], M = y * adaScore(model, x, t - 1), M2 = y * adaScore(model, x, t);
+    h += `<span>объект ${selected}, класс</span><span>${y > 0 ? "+1" : "−1"}</span>` +
+      `<span>отступ M до → после шага</span><span>${fmtN(M)} → ${fmtN(M2)}</span>` +
+      `<span>вес e<sup>−M</sup> / среднее до</span><span>${fmtN(model.weights[t - 1][selected] * d.Xtr.length)}</span>`;
+  }
+  $("score").innerHTML = h;
+  $("cap1").innerHTML = `<b>Шаг ${t}:</b> пень ${stumpText(model.trees[t - 1])}, площадь точки ∝ вес перед шагом`;
+  $("cap2").innerHTML = `<b>Сумма ${t} пней</b> ∑ρ<sub>t</sub>h<sub>t</sub>, знак — класс`;
+  const stop = model.stop;
+  $("stopnote").textContent = t === c.T && stop === "perfect"
+    ? "Здесь пень разделил обучающую выборку без ошибок (ε = 0): по формуле ρ бесконечен. sklearn берёт вес α = 1 (ρ = ½) и останавливается, страница делает так же"
+    : t === c.T && stop === "chance"
+      ? "Следующий пень был бы не лучше монетки (ε ≥ ½): sklearn такой пень не добавляет и останавливается, страница тоже"
+      : "";
+}
+
+function draw() {
+  const ds = $("ds").value, c = fitFor(ds);
+  const tIn = $("t");
+  tIn.max = Math.max(c.T, 1);
+  tIn.disabled = c.T < 2;
+  const t = Math.min(+tIn.value, c.T);
+  tIn.value = t;
+  $("tv").textContent = t;
+  drawStep(c, t); drawSum(c, t); drawCharts(c, t); drawScore(c, t);
+}
+
+$("step").addEventListener("click", (e) => {
+  const c = fitFor($("ds").value), cv = $("step"), v = dataView(cv, c.d);
+  const [mx, my] = canvasXY(cv, e);
+  let best = null, bd = 18;
+  c.d.Xtr.forEach((p, i) => {
+    const [px, py] = v.toPx(p), dist = Math.hypot(px - mx, py - my);
+    if (dist < bd) { bd = dist; best = i; }
+  });
+  selected = best === selected ? null : best;
+  draw();
+});
+$("ds").addEventListener("input", () => { selected = null; draw(); });
+["t", "test"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

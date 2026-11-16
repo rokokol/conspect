@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница kNN</title>
+<style>
+/*COMMON_CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница kNN</h1>
+  <p class="lead">Фон — доля соседей каждого класса в точке, линия — граница решения. Залитые точки — обучение, полые — тест. Щелчок по полю показывает k ближайших соседей точки</p>
+  <div class="wrap">
+    <canvas id="cv" class="square" width="640" height="640" aria-label="Зоны классификации kNN"></canvas>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="moons">Две луны</option>
+          <option value="circles">Кольца</option>
+          <option value="xor">XOR</option>
+          <option value="linear">Почти линейно разделимые</option>
+          <option value="blobs3">Три облака</option>
+        </select>
+      </label>
+      <label>Число соседей k: <b id="kv"></b>
+        <input id="k" type="range" min="1" max="60" value="15">
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="score" id="score"></div>
+      <p class="note">Малое k подгоняет каждый шум: train → 1, тест падает. Большое k сглаживает границу до почти прямой: обе точности падают вместе</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+let probe = null;
+
+function draw() {
+  const d = DATA[$("ds").value];
+  const k = +$("k").value;
+  $("kv").textContent = k;
+  const m = fitKnn(d.Xtr, d.ytr, { k });
+  // The view keeps one scale on both axes, so the neighbour circle stays a circle.
+  const v = dataView(cv, d);
+  drawClassifier(ctx, v, d, (x) => knnProba(m, x), m.classes, { showTest: $("showTest").checked });
+  if (probe) {
+    const near = d.Xtr.map((p, i) => [(p[0] - probe[0]) ** 2 + (p[1] - probe[1]) ** 2, i])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, k);
+    const [px, py] = v.toPx(probe);
+    const r = Math.sqrt(near[near.length - 1][0]) * v.scale;
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = css("--mark"); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    near.forEach(([, i]) => { const [x, y] = v.toPx(d.Xtr[i]); ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke(); });
+    probeMark(ctx, px, py);
+  }
+  const predict = argmaxClass((x) => knnProba(m, x), m.classes);
+  const pred = (X) => X.map(predict);
+  $("score").innerHTML =
+    `<span>Точность на обучении</span><span>${toComma(accuracy(pred(d.Xtr), d.ytr), 3)}</span>` +
+    `<span>Точность на тесте</span><span>${toComma(accuracy(pred(d.Xte), d.yte), 3)}</span>` +
+    `<span>Объектов в обучении</span><span>${d.Xtr.length}</span>`;
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  const v = dataView(cv, DATA[$("ds").value]);
+  const r = cv.getBoundingClientRect();
+  probe = v.toX(((e.clientX - r.left) / r.width) * cv.width, ((e.clientY - r.top) / r.height) * cv.height);
+  draw();
+});
+["ds", "k", "showTest"].forEach((id) => $(id).addEventListener("input", () => { if (id === "ds") probe = null; draw(); }));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница наивного байеса</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница наивного байеса</h1>
+  <p class="lead">Гауссов наивный байес, как GaussianNB в sklearn: для каждого класса и признака хранятся только среднее и дисперсия, ответ — класс с наибольшим P(C)·P(x₁ | C)·P(x₂ | C)</p>
+  <p class="lead">Эллипсы — плотности классов (сплошной 1σ, пунктир 2σ, плюс — среднее), оси вдоль осей признаков: так выглядит независимость признаков внутри класса. Залитые точки — обучение, полые — тест. Щелчок по полю раскладывает числитель формулы Байеса для этой точки</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" class="square" width="640" height="640" aria-label="Зоны наивного байеса"></canvas>
+      <canvas id="parts" width="640" height="250" aria-label="Разложение числителя Байеса"></canvas>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="blobs3">Три облака</option>
+          <option value="moons">Две луны</option>
+          <option value="circles">Кольца</option>
+          <option value="xor">XOR</option>
+          <option value="linear">Почти линейно разделимые</option>
+        </select>
+      </label>
+      <div class="row"><input id="freq" type="checkbox" checked><span>Априорные вероятности — частоты классов в обучении</span></div>
+      <label>P(C₀) = <b id="pv"></b> <span id="prest"></span>
+        <input id="p0" type="range" min="2" max="98" value="50" disabled>
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="row"><input id="showEll" type="checkbox" checked><span>Показывать эллипсы плотностей</span></div>
+      <div class="score" id="score"></div>
+      <div id="stored"></div>
+      <p class="note">Граница стоит там, где числители двух классов равны. Больший P(C₀) сдвигает её к другому классу: ему нужно более сильное свидетельство в признаках. На облаках допущение о независимости почти верно; на лунах и XOR признаки внутри класса связаны, и эллипсы с осями вдоль осей признаков описывают их плохо</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+let probe = null;
+const rgb = (c) => `rgb(${c})`;
+
+function priorsOf(nC) {
+  if ($("freq").checked) return null;
+  const p0 = +$("p0").value / 100;
+  return [p0, ...new Array(nC - 1).fill((1 - p0) / (nC - 1))];
+}
+
+function model() {
+  const d = DATA[$("ds").value];
+  const nC = new Set(d.ytr).size;
+  return { d, nC, m: fitGnb(d.Xtr, d.ytr, { priors: priorsOf(nC) }) };
+}
+
+function drawEllipses(v, m, cols) {
+  ctx.save();
+  m.theta.forEach((mu, k) => {
+    const [cx, cy] = v.toPx(mu);
+    ctx.strokeStyle = rgb(cols[k]);
+    ctx.lineWidth = 2.5;
+    [1, 2].forEach((s) => {
+      ctx.setLineDash(s === 1 ? [] : [6, 5]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, s * Math.sqrt(m.var[k][0]) * v.scale, s * Math.sqrt(m.var[k][1]) * v.scale, 0, 0, 2 * Math.PI);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(cx - 7, cy); ctx.lineTo(cx + 7, cy); ctx.moveTo(cx, cy - 7); ctx.lineTo(cx, cy + 7);
+    ctx.strokeStyle = css("--surface"); ctx.lineWidth = 5; ctx.stroke();
+    ctx.strokeStyle = rgb(cols[k]); ctx.lineWidth = 2.5; ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// Stacked bars of the three logs whose sum is log of the Bayes numerator:
+// the shortest bar is the winning class.
+function drawParts(m, nC, cols) {
+  const pv = $("parts"), px = pv.getContext("2d");
+  px.clearRect(0, 0, pv.width, pv.height);
+  px.fillStyle = css("--text"); px.font = font(12); px.textAlign = "left"; px.textBaseline = "top";
+  if (!probe) {
+    px.fillStyle = css("--text-2");
+    px.fillText("щёлкни по полю — здесь разложится числитель Байеса выбранной точки", 8, 8);
+    return;
+  }
+  const { logPrior, feat } = gnbParts(m, probe);
+  const terms = logPrior.map((lp, k) => [lp, feat[k][0], feat[k][1]]);
+  const sums = terms.map((t) => t.reduce((s, v) => s + v, 0));
+  const post = gnbProba(m, probe);
+  const vmin = Math.min(...sums) * 1.05;
+  const g = frame(pv, [vmin, 0], [0, nC], { margin: [40, 54, 84, 26] });
+  axes(px, g, { xticks: [vmin, vmin / 2, 0], xfmt: (t) => num(t, 2), yticks: terms.map((_, k) => nC - k - 0.5), yfmt: (t) => "C" + sub(nC - t - 0.5) });
+  px.fillStyle = css("--text"); px.font = font(12); px.textAlign = "left"; px.textBaseline = "top";
+  mathText(px, "ln P(C) + ln P(x₁|C) + ln P(x₂|C): чем короче, тем вероятнее", 8, 8);
+  // Legend: the shade of a segment tells which of the three terms it is.
+  let lx = 8;
+  ["ln P(C)", "ln P(x₁|C)", "ln P(x₂|C)"].forEach((name, q) => {
+    px.globalAlpha = [1, 0.65, 0.35][q];
+    px.fillStyle = css("--text-2");
+    px.fillRect(lx, 30, 14, 12);
+    px.globalAlpha = 1;
+    px.font = font(12); px.textAlign = "left"; px.textBaseline = "middle";
+    mathText(px, name, lx + 19, 36);
+    lx += 19 + px.measureText(name).width + 18;
+  });
+  const best = post.indexOf(Math.max(...post));
+  terms.forEach((t, k) => {
+    let cum = 0;
+    const yc = g.py(nC - k - 0.5), h = Math.min(30, (g.H / nC) * 0.6);
+    t.forEach((v, q) => {
+      px.globalAlpha = [1, 0.65, 0.35][q];
+      px.fillStyle = rgb(cols[k]);
+      px.fillRect(g.px(cum + v), yc - h / 2, g.px(cum) - g.px(cum + v), h);
+      cum += v;
+    });
+    px.globalAlpha = 1;
+    px.fillStyle = css("--text"); px.font = font(12); px.textAlign = "left"; px.textBaseline = "middle";
+    px.fillText(`P=${post[k] < 1e-4 ? "<0,0001" : toComma(post[k], 3)}${k === best ? " ◀" : ""}`, g.ml + g.W + 6, yc);
+  });
+}
+
+function stored(m, nC) {
+  let h = `<table class="compact"><tr><th>Класс</th><th>P(C)</th><th>μ₁</th><th>σ₁</th><th>μ₂</th><th>σ₂</th></tr>`;
+  for (let k = 0; k < nC; k++) {
+    h += `<tr><td>C${sub(k)}</td><td>${num(m.prior[k], 2)}</td><td>${num(m.theta[k][0], 2)}</td><td>${num(Math.sqrt(m.var[k][0]), 2)}</td><td>${num(m.theta[k][1], 2)}</td><td>${num(Math.sqrt(m.var[k][1]), 2)}</td></tr>`;
+  }
+  return h + "</table>";
+}
+
+function draw() {
+  const { d, nC, m } = model();
+  $("pv").textContent = $("freq").checked ? num(m.prior[0], 2) : toComma(+$("p0").value / 100, 2);
+  $("prest").textContent = nC > 2 ? "остальное поровну" : "";
+  $("p0").disabled = $("freq").checked;
+  const proba = (x) => gnbProba(m, x);
+  const v = dataView(cv, d);
+  drawClassifier(ctx, v, d, proba, m.classes, { showTest: $("showTest").checked, N: 80 });
+  const cols = classColors(nC);
+  if ($("showEll").checked) drawEllipses(v, m, cols);
+  if (probe) probeMark(ctx, ...v.toPx(probe));
+  drawParts(m, nC, cols);
+  const predict = argmaxClass(proba, m.classes);
+  $("score").innerHTML =
+    `<span>Точность на обучении</span><span>${toComma(accuracy(d.Xtr.map(predict), d.ytr), 3)}</span>` +
+    `<span>Точность на тесте</span><span>${toComma(accuracy(d.Xte.map(predict), d.yte), 3)}</span>` +
+    `<span>Чисел хранит модель</span><span>${2 * nC * 2 + nC}</span>` +
+    `<span>Чисел в обучении</span><span>${d.Xtr.length * 2}</span>`;
+  $("stored").innerHTML = stored(m, nC);
+}
+
+cv.addEventListener("pointerdown", (e) => {
+  probe = dataView(cv, DATA[$("ds").value]).toX(...canvasXY(cv, e));
+  draw();
+});
+["ds", "freq", "p0", "showTest", "showEll"].forEach((id) => $(id).addEventListener("input", () => { if (id === "ds") probe = null; draw(); }));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница критериев информативности</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+h2 { margin: 6px 0 0; border: 0; padding: 0; }
+.panel h2 { margin: 0; }
+.cap { font-size: 13px; color: var(--text-2); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница критериев информативности</h1>
+  <p class="lead">Три меры неоднородности узла по долям классов pₖ: ошибка классификации 1 − max pₖ, неопределённость Джини 1 − Σpₖ² и энтропия −Σpₖ log₂ pₖ. Сверху — один узел: меняй числа объектов классов. Ниже — 20 шариков на оси из лекции: выбери порог X ≤ t и сравни, какой порог выберет каждая мера; щелчок по шарику меняет его цвет</p>
+  <div class="wrap">
+    <div class="plots">
+      <h2>Узел</h2>
+      <canvas id="node" width="640" height="90" aria-label="Доли классов в узле"></canvas>
+      <canvas id="curves" width="640" height="340" aria-label="Критерии как функции доли класса"></canvas>
+      <h2>Шарики и порог</h2>
+      <canvas id="balls" width="640" height="150" aria-label="Шарики на оси и порог"></canvas>
+      <canvas id="scan" width="640" height="320" aria-label="Взвешенная неоднородность по порогам"></canvas>
+    </div>
+    <div class="panel">
+      <div class="sec">
+        <h2>Узел</h2>
+        <label>Классов K
+          <select id="K"><option value="2">2</option><option value="3">3</option></select>
+        </label>
+        <label>Объектов класса C₀: <b id="n0v"></b><input id="n0" type="range" min="0" max="20" value="8"></label>
+        <label>Объектов класса C₁: <b id="n1v"></b><input id="n1" type="range" min="0" max="20" value="5"></label>
+        <label id="n2l">Объектов класса C₂: <b id="n2v"></b><input id="n2" type="range" min="0" max="20" value="6"></label>
+        <div id="nodeTbl"></div>
+      </div>
+      <div class="sec">
+        <h2>Порог для шариков</h2>
+        <label>Порог X ≤ <b id="tv"></b>
+          <input id="t" type="range" min="0" max="18" value="12">
+        </label>
+        <button id="reset">Вернуть раскраску лекции</button>
+        <div id="splitTbl"></div>
+        <div id="best"></div>
+      </div>
+      <p class="note">Все три меры равны нулю на чистом узле и максимальны при равных долях: 1 − 1/K для ошибки и Gini, log₂ K для энтропии. На графиках для двух классов ошибка и Gini умножены на 2, чтобы максимум был 1, как у энтропии</p>
+      <p class="note">Так видно, что 2·Gini почти повторяет энтропию, а ошибка — треугольник. Ошибка линейна по обе стороны от p = ½, и разбиение, оставляющее большинство прежним в обеих частях, она не замечает</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const KINDS = ["mis", "gini", "ent"];
+const TITLE = { mis: "ошибка", gini: "Gini", ent: "энтропия" };
+// The measures are not classes, so they stay neutral: told apart by dash and name.
+const LOOK = { mis: { col: "--text-2", w: 2, dash: [2, 3] }, gini: { col: "--text", w: 2, dash: [9, 4] }, ent: { col: "--text", w: 3, dash: [] } };
+const BAR_ALPHA = { mis: 0.3, gini: 0.6, ent: 1 };
+// Slide 14: red (1), four purple (0), four red, four purple, six red, purple.
+const LECTURE = [1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0];
+let balls = LECTURE.slice();
+
+const MAXV = (kind, K) => (kind === "ent" ? Math.log2(K) : 1 - 1 / K);
+
+function nodeCounts() {
+  const K = +$("K").value;
+  return { K, counts: [+$("n0").value, +$("n1").value, +$("n2").value].slice(0, K) };
+}
+
+function drawNode(K, counts) {
+  const cv = $("node"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const cols = classColors(K), n = counts.reduce((s, c) => s + c, 0);
+  cx.font = font(12); cx.textBaseline = "middle"; cx.textAlign = "center";
+  const x0 = 12, W = cv.width - 24;
+  if (n === 0) { cx.fillStyle = css("--text-2"); cx.textAlign = "left"; cx.fillText("пустой узел: добавь объекты", x0, 40); return; }
+  let x = x0;
+  counts.forEach((c, k) => {
+    const w = (c / n) * W;
+    cx.fillStyle = `rgb(${cols[k]})`; cx.fillRect(x, 20, w, 40);
+    if (w > 70) { cx.fillStyle = css("--surface"); mathText(cx, `C${sub(k)}: ${c}  (${num(c / n, 2)})`, x + w / 2, 40); }
+    x += w;
+  });
+  cx.strokeStyle = css("--text-2"); cx.lineWidth = 1; cx.strokeRect(x0, 20, W, 40);
+  cx.fillStyle = css("--text-2"); cx.textAlign = "left"; cx.fillText(`доли классов в узле, объектов ${n}`, x0, 8);
+}
+
+function drawCurves(K, counts) {
+  const cv = $("curves"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [0, 1], [0, 1.15], { margin: [44, 28, 136, 42] });
+  if (K === 2) {
+    axes(cx, f, { xticks: [0, 0.25, 0.5, 0.75, 1], yticks: [0, 0.5, 1], xlabel: "доля класса C₁, p", ylabel: "мера неоднородности (ошибка и Gini × 2, энтропия в битах)", fmt: (t) => num(t, 2) });
+    const items = [];
+    for (const kind of KINDS) {
+      const k2 = kind === "ent" ? 1 : 2;
+      const pts = [];
+      for (let i = 0; i <= 200; i++) { const p = i / 200; pts.push([f.px(p), f.py(k2 * impurity([1 - p, p], kind))]); }
+      polyline(cx, pts, css(LOOK[kind].col), LOOK[kind].w, LOOK[kind].dash);
+      items.push({ text: kind === "ent" ? "энтропия" : kind === "gini" ? "2·Gini" : "2·ошибка", y: f.py(k2 * impurity([1, 0], kind)), look: LOOK[kind] });
+    }
+    // The three labels all end at the same height 0 on the right, so they stack in the given order.
+    endLabels(cx, f, items);
+    const n = counts[0] + counts[1];
+    if (n > 0) {
+      const p = counts[1] / n;
+      cx.strokeStyle = css("--mark"); cx.lineWidth = 1.5; cx.setLineDash([4, 4]);
+      cx.beginPath(); cx.moveTo(f.px(p), f.mt); cx.lineTo(f.px(p), f.mt + f.H); cx.stroke(); cx.setLineDash([]);
+      for (const kind of KINDS) dot(cx, f.px(p), f.py((kind === "ent" ? 1 : 2) * impurity(counts, kind)), css("--mark"), { r: 5 });
+    }
+  } else {
+    // K > 2 has no single axis of shares: show each measure as a share of its maximum.
+    const n = counts.reduce((s, c) => s + c, 0);
+    axes(cx, f, { yticks: [0, 0.5, 1], ylabel: "значение меры в долях её максимума для K классов", fmt: (t) => num(t, 2) });
+    KINDS.forEach((kind, q) => {
+      const v = n === 0 ? 0 : impurity(counts, kind) / MAXV(kind, K);
+      const x = f.px(0.12 + q * 0.3), w = f.W * 0.2;
+      cx.globalAlpha = BAR_ALPHA[kind]; cx.fillStyle = css("--text"); cx.fillRect(x, f.py(v), w, f.py(0) - f.py(v)); cx.globalAlpha = 1;
+      cx.fillStyle = css("--text"); cx.font = font(12); cx.textAlign = "center"; cx.textBaseline = "bottom";
+      cx.fillText(num(v, 2), x + w / 2, f.py(v) - 4);
+      cx.textBaseline = "top"; cx.fillStyle = css("--text-2");
+      cx.fillText(TITLE[kind], x + w / 2, f.py(0) + 6);
+    });
+  }
+}
+
+function nodeTable(K, counts) {
+  const rows = KINDS.map((kind) => `<tr><td>${TITLE[kind]}</td><td>${num(impurity(counts, kind), 3)}</td><td>${num(MAXV(kind, K), 3)}</td></tr>`).join("");
+  $("nodeTbl").innerHTML = `<table><tr><th>Мера</th><th>значение</th><th>максимум</th></tr>${rows}</table>`;
+}
+
+function drawBalls(t) {
+  const cv = $("balls"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.8, 19.8], [0, 1], { margin: [14, 34, 14, 30] });
+  axes(cx, f, { xticks: balls.map((_, i) => i) });
+  const cols = classColors(2);
+  const half = f.px(1) - f.px(0);
+  const left = balls.slice(0, t + 1), right = balls.slice(t + 1);
+  const cnt = (a) => [a.filter((v) => v === 0).length, a.filter((v) => v === 1).length];
+  cx.fillStyle = css("--text-2"); cx.font = font(12); cx.textBaseline = "top";
+  cx.textAlign = "left";
+  cx.fillText(`X ≤ ${t}: ${cnt(left)[0]} сиреневых, ${cnt(left)[1]} красных`, f.ml + 4, 10);
+  cx.textAlign = "right";
+  cx.fillText(`X > ${t}: ${cnt(right)[0]} сиреневых, ${cnt(right)[1]} красных`, f.ml + f.W - 4, 10);
+  balls.forEach((b, i) => dot(cx, f.px(i), f.py(0.5), `rgb(${cols[b]})`, { r: Math.min(14, half * 0.4) }));
+  cx.strokeStyle = css("--mark"); cx.lineWidth = 2.5;
+  cx.beginPath(); cx.moveTo(f.px(t + 0.5), f.mt); cx.lineTo(f.px(t + 0.5), f.mt + f.H); cx.stroke();
+}
+
+function drawScan(t) {
+  const cv = $("scan"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.5, 18.5], [0, 1.05], { margin: [44, 28, 136, 42] });
+  axes(cx, f, { xticks: [0, 3, 6, 9, 12, 15, 18], yticks: [0, 0.25, 0.5, 0.75, 1], xlabel: "порог t: X ≤ t", ylabel: "взвешенная неоднородность двух частей (энтропия в битах)", fmt: (v) => num(v, 2) });
+  const items = [];
+  for (const kind of KINDS) {
+    const scan = scanSplits(balls, kind), best = bestSplit(scan);
+    polyline(cx, scan.map((r) => [f.px(r.t), f.py(r.weighted)]), css(LOOK[kind].col), LOOK[kind].w, LOOK[kind].dash);
+    // Every threshold that reaches the minimum, not only the first one.
+    scan.filter((r) => r.weighted <= best.weighted + 1e-12).forEach((r) => dot(cx, f.px(r.t), f.py(r.weighted), css(LOOK[kind].col), { r: 5 }));
+    items.push({ text: TITLE[kind], y: f.py(scan[scan.length - 1].weighted), look: LOOK[kind] });
+  }
+  endLabels(cx, f, items);
+  cx.strokeStyle = css("--mark"); cx.lineWidth = 1.5; cx.setLineDash([4, 4]);
+  cx.beginPath(); cx.moveTo(f.px(t), f.mt); cx.lineTo(f.px(t), f.mt + f.H); cx.stroke(); cx.setLineDash([]);
+}
+
+function splitTables(t) {
+  const total = [0, 1].map((c) => balls.filter((v) => v === c).length);
+  const left = [0, 1].map((c) => balls.slice(0, t + 1).filter((v) => v === c).length);
+  const right = total.map((c, k) => c - left[k]);
+  let h = `<table class="compact"><tr><th>Мера</th><th>до</th><th>лев.</th><th>прав.</th><th>взв.</th><th>прир.</th></tr>`;
+  let bestTxt = `<table><tr><th>Мера</th><th>лучший порог</th></tr>`;
+  for (const kind of KINDS) {
+    const scan = scanSplits(balls, kind), row = scan[t], best = bestSplit(scan);
+    h += `<tr><td>${TITLE[kind]}</td><td>${num(impurity(total, kind), 2)}</td><td>${num(row.left, 2)}</td><td>${num(row.right, 2)}</td><td>${num(row.weighted, 2)}</td><td>${num(row.gain, 2)}</td></tr>`;
+    const ties = scan.filter((r) => r.weighted <= best.weighted + 1e-12).map((r) => r.t);
+    bestTxt += `<tr><td>${TITLE[kind]}</td><td>${ties.map((q) => "X ≤ " + q).join(" или ")}${ties.length > 1 ? " (ничья)" : ""}</td></tr>`;
+  }
+  $("splitTbl").innerHTML = h + `</table><p class="note">до — весь набор, лев. и прав. — части X ≤ t и X > t, взв. — их взвешенная сумма, прир. — прирост информативности (до минус взв.)</p>`;
+  $("best").innerHTML = bestTxt + "</table>";
+}
+
+function draw() {
+  const { K, counts } = nodeCounts();
+  $("n2l").style.display = K === 3 ? "" : "none";
+  ["n0", "n1", "n2"].forEach((id) => { $(id + "v").textContent = $(id).value; });
+  const t = +$("t").value;
+  $("tv").textContent = t;
+  drawNode(K, counts); drawCurves(K, counts); nodeTable(K, counts);
+  drawBalls(t); drawScan(t); splitTables(t);
+}
+
+$("balls").addEventListener("pointerdown", (e) => {
+  const cv = $("balls"), f = frame(cv, [-0.8, 19.8], [0, 1], { margin: [14, 34, 14, 30] });
+  const [px, py] = canvasXY(cv, e);
+  const i = Math.round(f.dx(px));
+  if (i >= 0 && i < balls.length && Math.abs(py - f.py(0.5)) < 22 && Math.abs(px - f.px(i)) < 16) { balls[i] = 1 - balls[i]; draw(); }
+});
+$("reset").addEventListener("click", () => { balls = LECTURE.slice(); draw(); });
+["K", "n0", "n1", "n2", "t"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

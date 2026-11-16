@@ -1,0 +1,256 @@
+/* Эффект телевизионных помех красного цвета для Obsidian */
+
+/* Основной класс для применения эффекта */
+.tv-glitch {
+  position: relative;
+  color: #ff0000;
+  font-family: 'Courier New', monospace;
+  animation: tv-glitch-main 2s infinite linear alternate-reverse;
+}
+
+/* Псевдоэлементы для создания слоев помех */
+.tv-glitch::before,
+.tv-glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tv-glitch::before {
+  animation: tv-glitch-1 0.5s infinite linear alternate-reverse;
+  color: #ff3333;
+  z-index: -1;
+}
+
+.tv-glitch::after {
+  animation: tv-glitch-2 0.3s infinite linear alternate-reverse;
+  color: #cc0000;
+  z-index: -2;
+}
+
+/* Основная анимация */
+@keyframes tv-glitch-main {
+  0%, 14%, 15%, 49%, 50%, 99%, 100% {
+    transform: skew(0deg);
+    filter: hue-rotate(0deg);
+  }
+  1%, 2% {
+    transform: skew(0.5deg);
+    filter: hue-rotate(90deg);
+  }
+  3%, 4% {
+    transform: skew(-0.5deg);
+    filter: hue-rotate(180deg);
+  }
+  5%, 6% {
+    transform: skew(0.2deg);
+    filter: hue-rotate(270deg);
+  }
+  16%, 17% {
+    transform: skew(-0.8deg);
+    filter: hue-rotate(45deg);
+  }
+  51%, 52% {
+    transform: skew(0.3deg);
+    filter: hue-rotate(135deg);
+  }
+}
+
+/* Анимация первого слоя помех */
+@keyframes tv-glitch-1 {
+  0%, 49%, 100% {
+    transform: translate(0);
+  }
+  1%, 3% {
+    transform: translate(-2px, -1px);
+    opacity: 0.7;
+  }
+  2% {
+    transform: translate(2px, 1px);
+    opacity: 0.8;
+  }
+  50%, 52% {
+    transform: translate(-1px, 2px);
+    opacity: 0.6;
+  }
+  51% {
+    transform: translate(1px, -2px);
+    opacity: 0.9;
+  }
+}
+
+/* Анимация второго слоя помех */
+@keyframes tv-glitch-2 {
+  0%, 19%, 21%, 63%, 64%, 100% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-3px, 2px);
+    opacity: 0.5;
+  }
+  62% {
+    transform: translate(3px, -2px);
+    opacity: 0.7;
+  }
+  65% {
+    transform: translate(-2px, -1px);
+    opacity: 0.6;
+  }
+}
+
+/* Эффект сканлайнов */
+.tv-glitch-scanlines {
+  position: relative;
+  overflow: hidden;
+}
+
+.tv-glitch-scanlines::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 98%,
+    rgba(255, 0, 0, 0.1) 100%
+  );
+  background-size: 3px 100%;
+  animation: tv-scanlines 0.1s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes tv-scanlines {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(3px);
+  }
+}
+
+/* Эффект статических помех */
+.tv-static {
+  position: relative;
+  background: 
+    radial-gradient(circle at 20% 80%, transparent 20%, rgba(255, 0, 0, 0.05) 21%, rgba(255, 0, 0, 0.05) 34%, transparent 35%),
+    linear-gradient(0deg, rgba(255, 0, 0, 0.02), rgba(255, 0, 0, 0.03));
+  animation: tv-static-noise 0.2s infinite;
+}
+
+@keyframes tv-static-noise {
+  0%, 100% {
+    background-position: 0 0, 0 0;
+  }
+  10% {
+    background-position: -5% -10%, 0 0;
+  }
+  20% {
+    background-position: -15% 5%, 0 0;
+  }
+  30% {
+    background-position: 7% -25%, 0 0;
+  }
+  40% {
+    background-position: 20% 25%, 0 0;
+  }
+  50% {
+    background-position: -25% 10%, 0 0;
+  }
+  60% {
+    background-position: 15% -15%, 0 0;
+  }
+  70% {
+    background-position: 0 15%, 0 0;
+  }
+  80% {
+    background-position: 25% 35%, 0 0;
+  }
+  90% {
+    background-position: -10% -10%, 0 0;
+  }
+}
+
+/* Применение к заголовкам в Obsidian */
+.markdown-preview-view h1.tv-glitch,
+.markdown-preview-view h2.tv-glitch,
+.markdown-preview-view h3.tv-glitch,
+.markdown-preview-view h4.tv-glitch,
+.markdown-preview-view h5.tv-glitch,
+.markdown-preview-view h6.tv-glitch {
+  text-shadow: 
+    0 0 5px #ff0000,
+    0 0 10px #ff0000,
+    0 0 15px #ff0000;
+}
+
+/* Применение к обычному тексту */
+.markdown-preview-view p.tv-glitch,
+.markdown-preview-view span.tv-glitch {
+  text-shadow: 
+    0 0 3px #ff0000,
+    0 0 6px #ff0000;
+}
+
+/* Интенсивный эффект помех */
+.tv-glitch-intense {
+  animation-duration: 0.1s;
+  text-shadow: 
+    0 0 5px #ff0000,
+    0 0 10px #ff0000,
+    0 0 15px #ff0000,
+    0 0 20px #ff0000;
+}
+
+.tv-glitch-intense::before {
+  animation-duration: 0.05s;
+}
+
+.tv-glitch-intense::after {
+  animation-duration: 0.03s;
+}
+
+/* Мягкий эффект помех */
+.tv-glitch-soft {
+  animation-duration: 4s;
+  opacity: 0.9;
+}
+
+.tv-glitch-soft::before,
+.tv-glitch-soft::after {
+  opacity: 0.5;
+}
+
+/* Комбинированный класс для полного эффекта */
+.tv-glitch-full {
+  position: relative;
+  color: #ff0000;
+  font-family: 'Courier New', monospace;
+  animation: tv-glitch-main 2s infinite linear alternate-reverse;
+  text-shadow: 
+    0 0 5px #ff0000,
+    0 0 10px #ff0000;
+}
+
+.tv-glitch-full::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 98%,
+    rgba(255, 0, 0, 0.1) 100%
+  );
+  background-size: 2px 100%;
+  animation: tv-scanlines 0.1s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}

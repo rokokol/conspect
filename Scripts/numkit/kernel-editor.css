@@ -1,0 +1,9 @@
+/* Layout of the kernel editor of kernel-editor.js: no colours and no fonts, those are the page's (sandbox_kit).
+   Place it after the page's own rules for inputs, so that the size of the small inputs wins. */
+.ivl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.krows { display: grid; gap: 6px; }
+.krow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 4px; align-items: center; }
+.krow .kn, .krow .kd { font-size: 13px; }
+.krow input { padding: 4px 5px; font-size: 13px; }
+.krow .kx { padding: 2px 8px; }
+.krow .kx:disabled { opacity: 0.4; cursor: default; }

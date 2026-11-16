@@ -1,0 +1,28 @@
+/* Roles of the waveguide page over sandbox_kit's page.css: no hex here. */
+.wrap { grid-template-columns: 300px minmax(0, 1fr); }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+h2 { margin: 0 0 4px; border: 0; padding: 0; }
+.panel h2 { margin: 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 4px 4px 0 0; background: none; color: var(--text-2); padding: 8px 12px; }
+.tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+.tabs button:hover { color: var(--text); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { font-size: 13px; padding: 4px 8px; }
+.field2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.field2 > label { min-width: 0; }
+.scroll { overflow-x: auto; max-width: 100%; padding-bottom: 6px; scrollbar-width: thin; scrollbar-color: var(--accent) var(--panel); }
+.scroll table { min-width: 0; }
+.scroll td { white-space: nowrap; }
+td.l, th.l { text-align: left; }
+tr.pick { cursor: pointer; }
+tr.pick:hover td { color: var(--text); }
+tr.sel td { font-weight: 900; }
+.surf { color: var(--c0); }
+.leak { color: var(--c1); }
+.key i.d { background: none; border-top: 3px dashed currentColor; height: 0; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2px solid currentColor; vertical-align: middle; margin-right: 5px; }
+.dot.fill { background: currentColor; }
+label.chk { display: flex; gap: 8px; align-items: center; }
+label.chk > input { display: inline-block; margin: 0; width: auto; }
+canvas.sq { aspect-ratio: 1; max-width: 520px; margin: 0 auto; }

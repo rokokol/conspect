@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница графа кода</title>
+<style>
+/*COMMON_CSS*/
+svg.graph { width: 100%; max-width: 520px; height: auto; display: block; margin: 0 auto; }
+svg.graph .vtx { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+svg.graph .vtx.empty { stroke-width: 2.5; }
+svg.graph .vlab { fill: var(--text); font: 500 14px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; }
+svg.graph .arc { fill: none; stroke: var(--text-2); stroke-width: 1.6; }
+svg.graph .arc.cyc { stroke: var(--accent); stroke-width: 3.2; }
+svg.graph marker path { fill: var(--text-2); }
+svg.graph marker.cyc path { fill: var(--accent); }
+.keyline { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--text-2); vertical-align: middle; margin-right: 6px; }
+.keyline.cyc { border-color: var(--accent); border-top-width: 4px; }
+.parse { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.parse .label { color: var(--text-2); font-size: 13px; min-width: 7.5em; }
+.piece { border: 1px solid var(--accent); border-radius: 4px; padding: 1px 6px; font-variant-numeric: tabular-nums; }
+.piece i { font-style: normal; color: var(--text-2); font-size: 12px; margin-left: 6px; }
+.verdict-ok { color: var(--ddlc-monika-eye); }
+.verdict-bad { color: var(--ddlc-series-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница графа кода</h1>
+  <p class="lead">Введи кодовые слова: код взаимно однозначен, пока в графе G нет цикла через пустое слово Λ. Страница строит вершины и дуги по определению, ищет кратчайший цикл через Λ и по нему собирает слово с двумя разными разбиениями на кодовые слова</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Код</h2>
+        <label>Кодовые слова
+          <input id="words" type="text" spellcheck="false" autocomplete="off" placeholder="0 01 10">
+        </label>
+        <p id="ferr" class="err" role="status"></p>
+        <label>Готовый код
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="0 01 10">a→0, b→01, c→10 (лекция)</option>
+            <option value="01 010 101">01, 010, 101: цикл из двух вершин</option>
+            <option value="0 01 110">0, 01, 110: цикла нет</option>
+            <option value="0 10 11">0, 10, 11: префиксный код</option>
+            <option value="0 1 01">0, 1, 01: петля в Λ</option>
+          </select>
+        </label>
+        <div id="letters"></div>
+        <p class="note">Слова через пробел или запятую, любые символы, не больше 8 слов и 8 символов в слове. Буквы a, b, c… назначаются словам по порядку</p>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Вердикт</h2>
+        <div id="verdict"></div>
+      </section>
+      <section>
+        <h2>Граф кода</h2>
+        <svg id="graph" class="graph" viewBox="0 0 480 400" role="img" aria-label="Граф кода"></svg>
+        <div class="legend">
+          <span><span class="keyline"></span>дуга графа</span>
+          <span><span class="keyline cyc"></span>цикл через Λ</span>
+        </div>
+        <div id="verts"></div>
+        <div id="arcs"></div>
+      </section>
+      <section id="ambsec">
+        <h2>Слово с двумя разбиениями</h2>
+        <div id="amb"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+let words = [];
+let graph = null;
+let cycle = null;
+
+const LAMBDA = "Λ";
+const show = (w) => (w === "" ? LAMBDA : w);
+const letter = (l) => String.fromCharCode(97 + l);
+
+function layout(count) {
+  return Array.from({ length: count }, (_, k) => {
+    if (count === 1) return [240, 200];
+    const a = -Math.PI / 2 + (2 * Math.PI * k) / count;
+    return [240 + 150 * Math.cos(a), 200 + 140 * Math.sin(a)];
+  });
+}
+
+const radius = (w) => Math.max(17, 4.4 * w.length + 10);
+
+function arcPath(a, pos, rad, center) {
+  const [x1, y1] = pos[a.from], [x2, y2] = pos[a.to];
+  if (a.from === a.to) {
+    // A loop leaves the vertex outward, away from the centre of the picture.
+    let dx = x1 - center[0], dy = y1 - center[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx = pos.length === 1 ? 0 : dx / len; dy = pos.length === 1 ? -1 : dy / len;
+    const r = rad[a.from], nx = -dy, ny = dx;
+    const sx = x1 + dx * r + nx * r * 0.45, sy = y1 + dy * r + ny * r * 0.45;
+    const ex = x1 + dx * r - nx * r * 0.45, ey = y1 + dy * r - ny * r * 0.45;
+    return `M ${sx} ${sy} C ${sx + dx * 46 + nx * 22} ${sy + dy * 46 + ny * 22}, ${ex + dx * 46 - nx * 22} ${ey + dy * 46 - ny * 22}, ${ex} ${ey}`;
+  }
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  const sx = x1 + ux * rad[a.from], sy = y1 + uy * rad[a.from];
+  const ex = x2 - ux * (rad[a.to] + 4), ey = y2 - uy * (rad[a.to] + 4);
+  const bend = 22;                                   // to the right of the direction: the opposite arc bends the other way
+  const cx = (x1 + x2) / 2 - uy * bend, cy = (y1 + y2) / 2 + ux * bend;
+  return `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`;
+}
+
+function renderGraph() {
+  const { vertices, arcs } = graph;
+  const pos = layout(vertices.length);
+  const rad = vertices.map((v) => radius(show(v)));
+  const onCycle = new Set();
+  if (cycle) cycle.forEach((v, i) => onCycle.add(v + ">" + cycle[(i + 1) % cycle.length]));
+  const center = [240, 200];
+  const marker = (id, cls) => `<marker id="${id}" class="${cls}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"></path></marker>`;
+  let s = `<defs>${marker("ah", "")}${marker("ahc", "cyc")}</defs>`;
+  const sorted = [...arcs].sort((p, q) => onCycle.has(p.from + ">" + p.to) - onCycle.has(q.from + ">" + q.to));
+  for (const a of sorted) {
+    const cyc = onCycle.has(a.from + ">" + a.to);
+    s += `<path class="arc${cyc ? " cyc" : ""}" d="${arcPath(a, pos, rad, center)}" marker-end="url(#${cyc ? "ahc" : "ah"})"></path>`;
+  }
+  vertices.forEach((v, i) => {
+    s += `<circle class="vtx${i === 0 ? " empty" : ""}" cx="${pos[i][0]}" cy="${pos[i][1]}" r="${rad[i]}"></circle><text class="vlab" x="${pos[i][0]}" y="${pos[i][1]}">${esc(show(v))}</text>`;
+  });
+  $("graph").innerHTML = s;
+  // Crop the picture to the vertices, so a small graph is not lost in a big empty frame.
+  const pad = 60;
+  const x0 = Math.min(...pos.map((p, i) => p[0] - rad[i])) - pad, x1 = Math.max(...pos.map((p, i) => p[0] + rad[i])) + pad;
+  const y0 = Math.min(...pos.map((p, i) => p[1] - rad[i])) - pad, y1 = Math.max(...pos.map((p, i) => p[1] + rad[i])) + pad;
+  $("graph").setAttribute("viewBox", `${x0} ${y0} ${x1 - x0} ${y1 - y0}`);
+}
+
+function renderTables() {
+  const { vertices, arcs } = graph;
+  $("verts").innerHTML = `<p class="note">Вершины: ${vertices.map((v) => esc(show(v))).join(", ")}${vertices.length === 1 ? ". Собственных начал, которые есть и собственными концами, нет" : ""}</p>`;
+  if (!arcs.length) { $("arcs").innerHTML = '<p class="note">Дуг нет</p>'; return; }
+  const rows = arcs.map((a) => {
+    const bi = vertices[a.from], bj = vertices[a.to];
+    const onCyc = cycle && cycle.some((v, i) => v === a.from && cycle[(i + 1) % cycle.length] === a.to);
+    return `<tr class="${onCyc ? "sel" : ""}"><td>${esc(show(bi))} → ${esc(show(bj))}</td><td>${esc(words[a.word])}</td><td>${esc(show(bi))} · ${esc(show(a.mid))} · ${esc(show(bj))}</td><td>${a.D.length}</td></tr>`;
+  }).join("");
+  $("arcs").innerHTML = `<table class="compact"><tr><th>Дуга</th><th>Кодовое слово B</th><th>B = β · D · β′</th><th>s</th></tr>${rows}</table>
+    <p class="note">D — подряд идущие кодовые слова, s — их число; в строке цикла выделена фоном</p>`;
+}
+
+function piecesHtml(parsing) {
+  return parsing.map((l) => `<span class="piece">${esc(words[l])}<i>${letter(l)}</i></span>`).join("");
+}
+
+function renderAmbiguity() {
+  if (!cycle) {
+    $("ambsec").style.display = "none";
+    return;
+  }
+  $("ambsec").style.display = "";
+  const r = ambiguousWord(words, graph, cycle);
+  const m = cycle.length;
+  const names = cycle.map((v, i) => {
+    const a = graph.arcs.find((x) => x.from === v && x.to === cycle[(i + 1) % m]);
+    return `<tr><td>c${sub(i)}</td><td>${esc(words[a.word])}</td><td>${esc(show(graph.vertices[a.from]))} · ${esc(show(a.mid))} · ${esc(show(graph.vertices[a.to]))}</td></tr>`;
+  }).join("");
+  $("amb").innerHTML = `<div class="formula"><b>w</b> = ${esc(r.word)}, разбиений на кодовые слова: ${countParsings(r.word, words)}</div>
+    <div class="parse"><span class="label">разбиение 1</span>${piecesHtml(r.one)}<span class="label">= ${lettersOf(r.one)}</span></div>
+    <div class="parse"><span class="label">разбиение 2</span>${piecesHtml(r.two)}<span class="label">= ${lettersOf(r.two)}</span></div>
+    <p class="note">Слово собрано по дугам цикла: на дуге i берётся кодовое слово cᵢ = βᵢ · Dᵢ · βᵢ₊₁. В одном разбиении cᵢ целиком при чётном i, а Dᵢ режется на кодовые слова при нечётном; во втором наоборот</p>
+    <table class="compact"><tr><th>cᵢ</th><th>Кодовое слово</th><th>βᵢ · Dᵢ · βᵢ₊₁</th></tr>${names}</table>`;
+}
+
+function render() {
+  graph = codeGraph(words);
+  cycle = cycleThroughEmpty(graph);
+  $("letters").innerHTML = `<p class="note">${words.map((w, l) => `${letter(l)} → ${esc(w)}`).join(", ")}</p>`;
+  const path = cycle ? cycle.map((v) => show(graph.vertices[v])).concat([LAMBDA]).join(" → ") : "";
+  $("verdict").innerHTML = cycle
+    ? `<div class="formula"><b class="verdict-bad">Код не взаимно однозначен</b><br>В графе есть цикл через Λ: ${esc(path)}</div>`
+    : `<div class="formula"><b class="verdict-ok">Код взаимно однозначен</b><br>В графе нет ориентированных циклов через Λ</div>`;
+  renderGraph(); renderTables(); renderAmbiguity();
+}
+
+function apply() {
+  try {
+    words = parseCode($("words").value);
+    $("words").removeAttribute("aria-invalid"); $("ferr").textContent = "";
+    render();
+  } catch (e) {
+    if (!(e instanceof FormulaError)) throw e;
+    $("words").setAttribute("aria-invalid", "true");
+    $("ferr").textContent = e.message;
+  }
+}
+
+$("words").addEventListener("input", apply);
+$("preset").addEventListener("input", () => {
+  if (!$("preset").value) return;
+  $("words").value = $("preset").value; $("preset").value = ""; apply();
+});
+$("words").value = "0 01 10";
+apply();
+</script>
+</body>
+</html>

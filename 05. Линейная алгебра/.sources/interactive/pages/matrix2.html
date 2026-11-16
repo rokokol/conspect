@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница матрицы 2×2</title>
+<style>
+/*COMMON_CSS*/
+.mat { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.mat input, .xin input { text-align: right; }
+.xin { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.checks { display: grid; gap: 4px; }
+.checks label { display: flex; gap: 6px; align-items: center; }
+.sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.sw.dash { background: none !important; border-top: 2px dashed currentColor; height: 0; }
+.legend .c0 { color: var(--c0); }
+.legend .c1 { color: var(--c1); }
+.legend .ink { color: var(--text); }
+.legend .acc { color: var(--accent); }
+.eigen td.cx { color: var(--text-2); }
+.eigen th { white-space: normal; vertical-align: bottom; }
+.checks input { margin: 0; }
+.poly { font-size: 17px; }
+.bad { color: var(--ddlc-series-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница матрицы 2×2</h1>
+  <p class="lead">Матрица A действует на плоскость: окружность переходит в эллипс, квадрат в параллелограмм, а собственные векторы остаются на своих прямых. Меняй четыре числа или тяни вектор x мышью и смотри на Ax</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Матрица A</h2>
+        <div class="mat">
+          <input id="a" value="2" aria-label="a, строка 1 столбец 1" inputmode="decimal">
+          <input id="b" value="1" aria-label="b, строка 1 столбец 2" inputmode="decimal">
+          <input id="c" value="1" aria-label="c, строка 2 столбец 1" inputmode="decimal">
+          <input id="d" value="2" aria-label="d, строка 2 столбец 2" inputmode="decimal">
+        </div>
+        <p class="err" id="err" role="status"></p>
+        <label>Готовая матрица
+          <select id="preset"></select>
+        </label>
+      </div>
+      <div class="sec">
+        <h2>Вектор x</h2>
+        <div class="xin">
+          <input id="x1" value="1" aria-label="x1" inputmode="decimal">
+          <input id="x2" value="0.5" aria-label="x2" inputmode="decimal">
+        </div>
+        <p class="note">Вектор можно тянуть по плоскости мышью или пальцем, длина до 1,5</p>
+      </div>
+      <div class="sec checks">
+        <h2>Показать</h2>
+        <label><input id="showCircle" type="checkbox" checked> окружность и эллипс</label>
+        <label><input id="showSquare" type="checkbox" checked> квадрат и параллелограмм</label>
+        <label><input id="showFan" type="checkbox" checked> восемь векторов и образы</label>
+        <label><input id="showEig" type="checkbox" checked> собственные прямые</label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Плоскость</h2>
+        <canvas id="plane" class="square" role="img" aria-label="Плоскость: единичная окружность, квадрат и их образы под действием матрицы"></canvas>
+        <div class="legend">
+          <span class="c0"><i class="sw" style="background:currentColor"></i>до действия A</span>
+          <span class="c1"><i class="sw" style="background:currentColor"></i>после действия A</span>
+          <span class="ink"><i class="sw" style="background:currentColor"></i>вектор x и Ax</span>
+          <span class="acc"><i class="sw dash"></i>собственные прямые</span>
+        </div>
+        <div class="formula" id="geometry"></div>
+      </section>
+      <section>
+        <h2>Числа матрицы</h2>
+        <div class="score" id="numbers"></div>
+        <div class="formula poly" id="poly"></div>
+      </section>
+      <section>
+        <h2>Собственные числа и кратности</h2>
+        <div id="eigen"></div>
+        <p class="note" id="eigenNote"></p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*LACORE*/
+const PRESETS = [
+  ["Своя матрица", null],
+  ["Растяжение diag(2; 0,5)", [2, 0, 0, 0.5]],
+  ["Поворот на 45°", [Math.SQRT1_2, -Math.SQRT1_2, Math.SQRT1_2, Math.SQRT1_2]],
+  ["Сдвиг (1 1; 0 1)", [1, 1, 0, 1]],
+  ["Отражение относительно оси Ox", [1, 0, 0, -1]],
+  ["Вырожденная (1 2; 2 4)", [1, 2, 2, 4]],
+  ["Поворот с растяжением (1 −1; 1 1)", [1, -1, 1, 1]],
+  ["Жорданова клетка (2 1; 0 2)", [2, 1, 0, 2]],
+  ["Скалярная 2I", [2, 0, 0, 2]],
+  ["Симметричная (2 1; 1 2)", [2, 1, 1, 2]],
+  ["Общего вида (4 1; 2 3)", [4, 1, 2, 3]],
+];
+const fmt = (x) => formatNumber(x, 4);
+const EPSX = 1e-12;
+
+let A = [2, 1, 1, 2];
+let X = [1, 0.5];
+
+function readNumber(id) {
+  const s = $(id).value.trim().replace(",", ".").replace("−", "-");
+  if (s === "" || !/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(s)) throw new Error(`в поле ${id} нужно число, получено "${$(id).value}"`);
+  const v = Number(s);
+  if (Math.abs(v) > 1e6) throw new Error(`в поле ${id} число по модулю больше 10⁶`);
+  return v;
+}
+
+function readAll() {
+  try {
+    A = ["a", "b", "c", "d"].map(readNumber);
+    X = ["x1", "x2"].map(readNumber);
+    const len = Math.hypot(...X);
+    if (len > 1.5) X = X.map((v) => v * 1.5 / len);
+    $("err").textContent = "";
+    return true;
+  } catch (e) {
+    $("err").textContent = e.message;
+    return false;
+  }
+}
+
+function writeVector() { $("x1").value = String(+X[0].toFixed(3)); $("x2").value = String(+X[1].toFixed(3)); }
+
+function polyText(tr, det) {
+  const term = (v, s) => (v === 0 ? "" : ` ${v < 0 ? "−" : "+"} ${fmt(Math.abs(v))}${s}`);
+  return `λ²${term(-tr, "λ")}${term(det, "")}`;
+}
+
+function sign(x) { return x > 0 ? "+" : x < 0 ? "−" : "0"; }
+
+function renderText(e, sigma) {
+  const { tr, det } = e;
+  const img = [[0, 0], [1, 0], [1, 1], [0, 1]].map((p) => mapPoint(...A, p));
+  const area = signedArea(img);
+  const orient = Math.abs(area) < EPSX ? "квадрат сплющен в отрезок или точку, ориентации нет"
+    : area > 0 ? "ориентация сохраняется: обход вершин остаётся против часовой стрелки"
+      : "ориентация меняется: обход вершин идёт по часовой стрелке";
+  const ax = mapPoint(...A, X);
+  $("geometry").innerHTML = `Площадь образа единичного квадрата ${fmt(Math.abs(area))} = |det A|, ${orient}<br>`
+    + `Образ единичной окружности: эллипс с полуосями ${fmt(sigma[0])} и ${fmt(sigma[1])}<br>`
+    + `x = (${fmt(X[0])}; ${fmt(X[1])}), Ax = (${fmt(ax[0])}; ${fmt(ax[1])})`;
+  $("numbers").innerHTML = [
+    ["След tr A = a + d", fmt(tr)],
+    ["Определитель det A = ad − bc", fmt(det)],
+    ["Знак det A", sign(det)],
+    ["Дискриминант tr²A − 4 det A", fmt(e.disc)],
+  ].map(([p, q]) => `<span>${p}</span><span>${q}</span>`).join("");
+  $("poly").innerHTML = `det(A − λI) = λ² − tr A·λ + det A = ${polyText(tr, det)}`;
+  const vec = (v) => `(${fmt(v[0])}; ${fmt(v[1])})`;
+  let rows;
+  if (e.kind === "complex") {
+    rows = e.values.map((z) => `<tr><td>${fmt(z.re)} ${z.im < 0 ? "−" : "+"} ${fmt(Math.abs(z.im))}i</td><td>${e.alg}</td><td>${e.geom}</td><td class="cx">нет вещественного вектора</td></tr>`).join("");
+  } else if (e.kind === "double") {
+    const v = e.geom === 2 ? "любой вектор плоскости" : vec(e.vectors[0]);
+    rows = `<tr><td>${fmt(e.values[0].re)}</td><td>2</td><td>${e.geom}</td><td>${v}</td></tr>`;
+  } else {
+    rows = e.values.map((z, i) => `<tr><td>${fmt(z.re)}</td><td>1</td><td>1</td><td>${vec(e.vectors[i])}</td></tr>`).join("");
+  }
+  $("eigen").innerHTML = `<table class="eigen"><tr><th>λ</th><th>Алгебраическая кратность</th><th>Геометрическая кратность</th><th>Единичный собственный вектор</th></tr>${rows}</table>`;
+  $("eigenNote").textContent = e.kind === "complex"
+    ? `Вещественных собственных векторов нет, ни одна прямая через начало координат не переходит в себя. λ = α ± iβ, α = ${fmt(e.values[0].re)}, β = ${fmt(e.values[0].im)}`
+    : e.kind === "double" && e.geom === 1
+      ? "Кратное число с единственным собственным направлением: матрица не диагонализуется, это жорданова клетка"
+      : e.kind === "double"
+        ? "Матрица скалярная: A = λI, каждый вектор собственный"
+        : det === 0 ? "Одно из чисел равно 0: ядро матрицы это собственная прямая, вся плоскость сплющивается на другую" : "Два различных числа, векторы образуют базис плоскости";
+}
+
+function draw() {
+  const cv = $("plane");
+  const cssW = Math.max(240, cv.getBoundingClientRect().width || 600);
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssW * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cssW, cssW);
+  const sigma = svd(Float64Array.from(A), 2, 2).rho;
+  const R = Math.ceil(2 * 1.6 * Math.max(1, sigma[0])) / 2;
+  const S = cssW / (2 * R);
+  const P = (p) => [cssW / 2 + p[0] * S, cssW / 2 - p[1] * S];
+  const text = css("--text-2"), grid = css("--grid"), ink = css("--text"), c0 = css("--c0"), c1 = css("--c1"), acc = css("--accent");
+  g.lineWidth = 1;
+  g.font = "500 11px " + getComputedStyle(document.body).fontFamily;
+  g.fillStyle = text; g.textBaseline = "top"; g.textAlign = "left";
+  const stepGrid = R > 8 ? Math.ceil(R / 4) : 1;
+  for (let v = -Math.floor(R); v <= R; v += stepGrid) {
+    g.strokeStyle = v === 0 ? text : grid;
+    g.beginPath(); g.moveTo(...P([v, -R])); g.lineTo(...P([v, R])); g.stroke();
+    g.beginPath(); g.moveTo(...P([-R, v])); g.lineTo(...P([R, v])); g.stroke();
+    if (v !== 0) { g.fillText(String(v), P([v, 0])[0] + 2, P([v, 0])[1] + 2); g.fillText(String(v), P([0, v])[0] + 3, P([0, v])[1] + 2); }
+  }
+  const poly = (pts, close = true) => { g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(...P(p)) : g.moveTo(...P(p)))); if (close) g.closePath(); };
+  const arrow = (from, to, color, width) => {
+    const [x0, y0] = P(from), [x1, y1] = P(to);
+    g.strokeStyle = color; g.fillStyle = color; g.lineWidth = width;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    const ang = Math.atan2(y1 - y0, x1 - x0), L = Math.min(9, Math.hypot(x1 - x0, y1 - y0) * 0.5);
+    if (L > 2) { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x1 - L * Math.cos(ang - 0.4), y1 - L * Math.sin(ang - 0.4)); g.lineTo(x1 - L * Math.cos(ang + 0.4), y1 - L * Math.sin(ang + 0.4)); g.closePath(); g.fill(); }
+  };
+  const M = (p) => mapPoint(...A, p);
+  if ($("showSquare").checked) {
+    const sq = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    g.globalAlpha = 0.18; g.fillStyle = c0; poly(sq); g.fill();
+    g.globalAlpha = 0.22; g.fillStyle = c1; poly(sq.map(M)); g.fill();
+    g.globalAlpha = 1; g.lineWidth = 1.5;
+    g.strokeStyle = c0; poly(sq); g.stroke();
+    g.strokeStyle = c1; poly(sq.map(M)); g.stroke();
+    arrow([0, 0], M([1, 0]), c1, 1.5); arrow([0, 0], M([0, 1]), c1, 1.5);
+    g.fillStyle = c1; g.textBaseline = "middle";
+    const lab = (p, s) => { const [px, py] = P(p); g.fillText(s, px + 6, py - 8); };
+    lab(M([1, 0]), "Ae₁"); lab(M([0, 1]), "Ae₂");
+    g.fillStyle = c0; lab([1, 0], "e₁"); lab([0, 1], "e₂");
+  }
+  const N = 240;
+  const circle = Array.from({ length: N }, (_, i) => [Math.cos(2 * Math.PI * i / N), Math.sin(2 * Math.PI * i / N)]);
+  if ($("showCircle").checked) {
+    g.lineWidth = 1.5;
+    g.strokeStyle = c0; poly(circle); g.stroke();
+    g.strokeStyle = c1; g.lineWidth = 2; poly(circle.map(M)); g.stroke();
+  }
+  if ($("showFan").checked) {
+    for (let i = 0; i < 8; i++) {
+      const v = [Math.cos(Math.PI * i / 4 + 0.2), Math.sin(Math.PI * i / 4 + 0.2)];
+      g.globalAlpha = 0.45; arrow([0, 0], v, c0, 1); arrow([0, 0], M(v), c1, 1);
+    }
+    g.globalAlpha = 1;
+  }
+  const e = eig2(...A);
+  if ($("showEig").checked && e.kind !== "complex") {
+    g.setLineDash([6, 4]); g.strokeStyle = acc; g.lineWidth = 1.8;
+    for (const v of e.vectors) { poly([[-v[0] * R * 2, -v[1] * R * 2], [v[0] * R * 2, v[1] * R * 2]], false); g.stroke(); }
+    g.setLineDash([]);
+  }
+  arrow([0, 0], X, ink, 2.4);
+  arrow([0, 0], M(X), ink, 2.4);
+  g.fillStyle = ink; g.textBaseline = "middle";
+  const [tx, ty] = P(X), [ux, uy] = P(M(X));
+  g.fillText("x", tx + 6, ty - 8); g.fillText("Ax", ux + 6, uy - 8);
+  g.beginPath(); g.arc(tx, ty, 5, 0, 2 * Math.PI); g.stroke();
+  renderText(e, sigma);
+}
+
+function update() { if (readAll()) draw(); }
+function matrixEdited() { $("preset").value = "0"; update(); }
+
+PRESETS.forEach(([name], i) => { const o = document.createElement("option"); o.value = i; o.textContent = name; $("preset").appendChild(o); });
+$("preset").addEventListener("input", () => {
+  const v = PRESETS[+$("preset").value][1];
+  if (v) { ["a", "b", "c", "d"].forEach((id, i) => { $(id).value = String(+v[i].toFixed(4)); }); update(); }
+});
+["a", "b", "c", "d"].forEach((id) => $(id).addEventListener("input", matrixEdited));
+["x1", "x2"].forEach((id) => $(id).addEventListener("input", update));
+["showCircle", "showSquare", "showFan", "showEig"].forEach((id) => $(id).addEventListener("input", draw));
+
+function fromPointer(ev) {
+  const r = $("plane").getBoundingClientRect();
+  const sigma = svd(Float64Array.from(A), 2, 2).rho;
+  const R = Math.ceil(2 * 1.6 * Math.max(1, sigma[0])) / 2;
+  let p = [((ev.clientX - r.left) / r.width * 2 - 1) * R, (1 - (ev.clientY - r.top) / r.height * 2) * R];
+  const len = Math.hypot(...p);
+  if (len > 1.5) p = p.map((v) => v * 1.5 / len);
+  X = p; writeVector(); $("err").textContent = ""; draw();
+}
+$("plane").addEventListener("pointerdown", (ev) => { $("plane").setPointerCapture(ev.pointerId); fromPointer(ev); });
+$("plane").addEventListener("pointermove", (ev) => { if (ev.buttons) fromPointer(ev); });
+window.addEventListener("resize", draw);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+
+$("preset").value = "9";
+update();
+</script>
+</body>
+</html>

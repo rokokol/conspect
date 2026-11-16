@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница отступа</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница отступа</h1>
+  <p class="lead">Линейный классификатор c(x) = sign(w₁x₁ + w₂x₂ + b) на обучающей выборке с метками y = ±1. Отступ M = y·(w₁x₁ + w₂x₂ + b) положителен, когда объект в своём классе; кольцо вокруг точки — ошибка (M ≤ 0)</p>
+  <p class="lead">Поверни и сдвинь прямую, растяни w и смотри, как меняются отступы точек и потери: ступенька, квадратичная (1 − M)², hinge, логистическая log₂(1 + e⁻ᴹ) и экспоненциальная e⁻ᴹ</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" class="square" width="640" height="640" aria-label="Выборка и разделяющая прямая"></canvas>
+      <canvas id="curves" width="640" height="320" aria-label="Потери как функции отступа"></canvas>
+      <canvas id="bars" width="640" height="240" aria-label="Потери по объектам"></canvas>
+    </div>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="linear">Почти линейно разделимые</option>
+          <option value="moons">Две луны</option>
+          <option value="xor">XOR</option>
+        </select>
+      </label>
+      <label>Направление нормали w: <b id="thv"></b>
+        <input id="th" type="range" min="0" max="359" step="1" value="0">
+      </label>
+      <label>Сдвиг прямой от нуля: <b id="dv"></b>
+        <input id="off" type="range" min="-3" max="3" step="0.05" value="0">
+      </label>
+      <label>Длина ‖w‖ = <b id="sv"></b>
+        <input id="ls" type="range" min="-1" max="1" step="0.02" value="0">
+      </label>
+      <div class="score" id="wvals"></div>
+      <button id="best">Прямая с минимумом ошибок (перебор)</button>
+      <label>Потеря на нижних графиках
+        <select id="loss">
+          <option value="step">Ступенька [M ≤ 0]</option>
+          <option value="square">Квадратичная (1 − M)²</option>
+          <option value="hinge">Hinge max(0, 1 − M)</option>
+          <option value="logistic" selected>Логистическая log₂(1 + e⁻ᴹ)</option>
+          <option value="exp">Экспоненциальная e⁻ᴹ</option>
+        </select>
+      </label>
+      <div id="tbl"></div>
+      <p class="note">Растяжение w не двигает прямую и не меняет число ошибок, но меняет все отступы в одно и то же число раз: ступенька остаётся прежней, а гладкие потери меняются. Пунктир на плоскости — M = ±1, фон — σ(w·x + b)</p>
+      <p class="note">Все потери, кроме ступеньки, лежат над ней: сумма потерь — верхняя оценка числа ошибок. Логистическая нарисована с основанием 2, чтобы в нуле она равнялась 1</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+const LOSSES = ["step", "square", "hinge", "logistic", "exp"];
+const SHORT = { step: "ступенька", square: "(1−M)²", hinge: "hinge", logistic: "log₂(1+e⁻ᴹ)", exp: "e⁻ᴹ" };
+const NAMES = { step: "ступенька", square: "(1 − M)²", hinge: "hinge", logistic: "log₂(1 + e⁻ᴹ)", exp: "e⁻ᴹ" };
+
+function data() {
+  const d = DATA[$("ds").value];
+  return { X: d.Xtr, k: d.ytr, y: d.ytr.map((v) => 2 * v - 1), d: { Xtr: d.Xtr, ytr: d.ytr, Xte: [], yte: [] } };
+}
+
+function params() {
+  const th = (+$("th").value * Math.PI) / 180, off = +$("off").value, s = 10 ** +$("ls").value;
+  const n = [Math.cos(th), Math.sin(th)].map((v) => (Math.abs(v) < 1e-12 ? 0 : v));
+  // The line is n . x = off; f = s (n . x - off) = w . x + b.
+  return { th, off, s, n, w: [s * n[0], s * n[1]], b: -s * off };
+}
+
+// Exhaustive search over direction and offset for the fewest errors.
+function bestLine() {
+  const { X, y } = data();
+  let best = null;
+  for (let a = 0; a < 360; a++) {
+    const n = [Math.cos((a * Math.PI) / 180), Math.sin((a * Math.PI) / 180)];
+    for (let o = -3; o <= 3.0001; o += 0.05) {
+      const err = margins(X, y, n, -o).filter((M) => M <= 0).length;
+      if (!best || err < best.err) best = { a, o, err };
+    }
+  }
+  return best;
+}
+
+function drawPlane(p, M) {
+  const { X, k, d } = data();
+  const v = dataView(cv, d);
+  const sig = (x) => 1 / (1 + Math.exp(-(p.w[0] * x[0] + p.w[1] * x[1] + p.b)));
+  drawClassifier(ctx, v, d, (x) => { const q = sig(x); return [1 - q, q]; }, [0, 1], { showTest: false, N: 80, outline: false });
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height); ctx.clip();
+  const t = [-p.n[1], p.n[0]];
+  const along = (o, dash, width, col) => {
+    const c = [p.n[0] * o, p.n[1] * o];
+    polyline(ctx, [-30, 30].map((u) => v.toPx([c[0] + u * t[0], c[1] + u * t[1]])), col, width, dash);
+  };
+  along(p.off - 1 / p.s, [6, 5], 1.5, css("--text-2"));
+  along(p.off + 1 / p.s, [6, 5], 1.5, css("--text-2"));
+  along(p.off, [], 3, css("--text"));
+  // Normal w from the foot of the perpendicular, fixed length.
+  const foot = [p.n[0] * p.off, p.n[1] * p.off], tip = [foot[0] + 1.2 * p.n[0], foot[1] + 1.2 * p.n[1]];
+  const [fx, fy] = v.toPx(foot), [tx, ty] = v.toPx(tip);
+  ctx.strokeStyle = css("--text"); ctx.fillStyle = css("--text"); ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
+  const ang = Math.atan2(ty - fy, tx - fx);
+  ctx.beginPath(); ctx.moveTo(tx, ty);
+  ctx.lineTo(tx - 12 * Math.cos(ang - 0.4), ty - 12 * Math.sin(ang - 0.4));
+  ctx.lineTo(tx - 12 * Math.cos(ang + 0.4), ty - 12 * Math.sin(ang + 0.4)); ctx.fill();
+  ctx.font = font(14); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("w", tx + 14 * Math.cos(ang), ty + 14 * Math.sin(ang));
+  X.forEach((x, i) => { if (M[i] <= 0) { const [px, py] = v.toPx(x); ctx.strokeStyle = css("--mark"); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, py, 9, 0, 2 * Math.PI); ctx.stroke(); } });
+  ctx.restore();
+}
+
+function drawCurves(M, y, sel) {
+  const cc = $("curves"), cx = cc.getContext("2d");
+  cx.clearRect(0, 0, cc.width, cc.height);
+  const f = frame(cc, [-3, 3], [0, 4], { margin: [44, 28, 136, 42] });
+  axes(cx, f, { xticks: [-3, -2, -1, 0, 1, 2, 3], yticks: [0, 1, 2, 3, 4], xlabel: "отступ M", ylabel: "потеря" });
+  // Five losses cannot keep five theme colours in both themes, so a curve is
+  // told apart by its label at the right end and its dash, not by hue: the
+  // chosen one is ink and thick, the rest are thin grey: the class colours
+  // belong to the points on the same page, not to the losses.
+  const dashes = { step: [], square: [9, 4], hinge: [2, 3], logistic: [], exp: [10, 3, 2, 3] };
+  const look = (name) => name === sel ? { col: "--text", w: 3.5, dash: [] }
+    : name === "step" ? { col: "--text-2", w: 2.5, dash: [] } : { col: "--text-2", w: 1.8, dash: dashes[name] };
+  cx.save(); cx.beginPath(); cx.rect(f.ml, f.mt, f.W, f.H); cx.clip();
+  for (const name of [...LOSSES.filter((n) => n !== sel), sel]) {
+    const { col, w, dash } = look(name);
+    // The step jumps at 0: draw its two flat pieces, not a slanted line.
+    if (name === "step") {
+      polyline(cx, [[f.px(-3), f.py(1)], [f.px(0), f.py(1)]], css(col), w);
+      polyline(cx, [[f.px(0), f.py(0)], [f.px(3), f.py(0)]], css(col), w);
+    } else {
+      const pts = [];
+      for (let i = 0; i <= 240; i++) { const m = -3 + (6 * i) / 240; pts.push([f.px(m), f.py(marginLoss(name, m))]); }
+      polyline(cx, pts, css(col), w, dash);
+    }
+  }
+  cx.restore();
+  // Training points on the chosen loss curve, class colours.
+  M.forEach((m, i) => {
+    if (m < -3 || m > 3) return;
+    dot(cx, f.px(m), f.py(marginLoss(sel, m)), css(y[i] > 0 ? "--c1" : "--c0"), { r: 3.2 });
+  });
+  endLabels(cx, f, LOSSES.map((name) => ({ text: SHORT[name], y: f.py(Math.min(4, marginLoss(name, 3))), look: look(name), strong: name === sel })));
+}
+
+function drawBars(M, y, sel) {
+  const bv = $("bars"), bx = bv.getContext("2d");
+  bx.clearRect(0, 0, bv.width, bv.height);
+  const order = M.map((_, i) => i).sort((a, b) => M[a] - M[b]);
+  const vals = order.map((i) => marginLoss(sel, M[i]));
+  const top = Math.max(1, ...vals) * 1.05;
+  const g = frame(bv, [0, order.length], [0, top], { margin: [44, 28, 14, 30] });
+  axes(bx, g, { yticks: [0, top / 2, top], yfmt: (t) => num(t, 2), ylabel: `потеря ${NAMES[sel]} по объектам, слева направо по возрастанию отступа` });
+  const bw = Math.max(1, (g.W / order.length) * 0.8);
+  order.forEach((i, j) => {
+    bx.fillStyle = css(y[i] > 0 ? "--c1" : "--c0");
+    bx.fillRect(g.px(j + 0.5) - bw / 2, g.py(vals[j]), bw, g.py(0) - g.py(vals[j]));
+  });
+  // Where the margin changes sign: the errors are to the left of this line.
+  const nErr = M.filter((m) => m <= 0).length;
+  bx.strokeStyle = css("--mark"); bx.lineWidth = 1.5; bx.setLineDash([4, 4]);
+  bx.beginPath(); bx.moveTo(g.px(nErr), g.mt); bx.lineTo(g.px(nErr), g.mt + g.H); bx.stroke(); bx.setLineDash([]);
+}
+
+function draw() {
+  const { X, y } = data();
+  const p = params();
+  $("thv").textContent = $("th").value + "°"; $("dv").textContent = num(p.off, 2); $("sv").textContent = num(p.s, 3);
+  $("wvals").innerHTML = `<span>w₁</span><span>${num(p.w[0])}</span><span>w₂</span><span>${num(p.w[1])}</span><span>b</span><span>${num(p.b)}</span>`;
+  const M = margins(X, y, p.w, p.b);
+  const sel = $("loss").value;
+  drawPlane(p, M);
+  drawCurves(M, y, sel);
+  drawBars(M, y, sel);
+  const errs = M.filter((m) => m <= 0).length;
+  let h = `<table><tr><th>Потеря</th><th>сумма</th><th>среднее</th></tr>`;
+  for (const name of LOSSES) {
+    const s = M.reduce((t, m) => t + marginLoss(name, m), 0);
+    h += `<tr class="${name === sel ? "sel" : ""}"><td>${NAMES[name]}</td><td>${num(s, 4)}</td><td>${num(s / M.length, 3)}</td></tr>`;
+  }
+  $("tbl").innerHTML = h + `</table><p class="note">Ошибок (M ≤ 0): ${errs} из ${M.length}</p>`;
+}
+
+function setBest() {
+  const b = bestLine();
+  $("th").value = b.a; $("off").value = Math.round(b.o * 20) / 20;
+  draw();
+}
+
+["th", "off", "ls", "loss"].forEach((id) => $(id).addEventListener("input", draw));
+$("ds").addEventListener("input", setBest);
+$("best").addEventListener("click", setBest);
+onTheme(draw);
+setBest();
+</script>
+</body>
+</html>

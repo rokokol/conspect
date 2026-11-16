@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница сингулярного разложения</title>
+<style>
+/*COMMON_CSS*/
+.pics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 520px) { .pics { grid-template-columns: 1fr; } }
+.pics figure { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.pics figcaption { font-size: 13px; color: var(--text-2); }
+.pics canvas { background: var(--panel); }
+.chR { color: var(--ddlc-series-2); }
+.chG { color: var(--ddlc-monika-eye); }
+.chB { color: var(--ddlc-series-3); }
+.legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--text); vertical-align: middle; margin-right: 5px; }
+.legend .dot.fill { background: var(--text); }
+input[type=file] { font: inherit; color: var(--text); width: 100%; }
+#status:empty { display: none; }
+td.bad { color: var(--ddlc-series-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница сингулярного разложения</h1>
+  <p class="lead">Каждый цветовой канал картинки это матрица. Оставь в её разложении только первые k слагаемых ρ<sub>j</sub> q<sup>j</sup> ⊗ e<sup>j</sup> и смотри, сколько памяти нужно и как быстро убывают сингулярные числа. Можно загрузить свою картинку</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Картинка</h2>
+        <button id="builtin" type="button">Встроенная картинка</button>
+        <label>Своя картинка
+          <input id="pick" type="file" accept="image/*">
+        </label>
+        <p class="note">Картинка с длинной стороной больше 300 px предварительно сжимается, чтобы разложение считалось быстро. Файл никуда не отправляется</p>
+        <p class="err" id="status" role="status"></p>
+      </div>
+      <div class="sec">
+        <h2>Ранг приближения</h2>
+        <label>k = <b id="kval">1</b> из <span id="kmax">1</span>
+          <input id="k" type="range" min="1" max="1" value="1" step="1">
+        </label>
+        <label>Канал для графика и чисел
+          <select id="ch">
+            <option value="0">R</option>
+            <option value="1">G</option>
+            <option value="2">B</option>
+          </select>
+        </label>
+        <label>Показать
+          <select id="view">
+            <option value="rgb">все каналы</option>
+            <option value="0">только R</option>
+            <option value="1">только G</option>
+            <option value="2">только B</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Исходная и сжатая картинки</h2>
+        <div class="pics">
+          <figure><canvas id="orig" aria-label="Исходная картинка"></canvas><figcaption>Исходная</figcaption></figure>
+          <figure><canvas id="approx" aria-label="Сжатая картинка"></canvas><figcaption id="approxcap">Сжатая</figcaption></figure>
+        </div>
+        <div class="formula" id="formula"></div>
+      </section>
+      <section>
+        <h2>Память</h2>
+        <div class="score" id="memory"></div>
+        <p class="note">Для каждого канала хранятся k векторов q длины m, k векторов e длины n и k чисел ρ</p>
+      </section>
+      <section>
+        <h2>Ошибка приближения</h2>
+        <div id="errors"></div>
+        <p class="note">Значения яркости лежат в пределах 0..255. Ошибка считается для самой суммы, до обрезки яркости в картинке</p>
+      </section>
+      <section>
+        <h2>Сингулярные числа</h2>
+        <canvas id="chart" role="img" aria-label="График сингулярных чисел в логарифмической шкале"></canvas>
+        <div class="legend" id="legend"></div>
+        <p class="note">Щелчок или протяжка по графику задаёт k</p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*NUMKIT*/
+/*LACORE*/
+const MAX_SIDE = 300;
+const NAMES = ["R", "G", "B"];
+const CLASSES = ["chR", "chG", "chB"];
+const VARS = ["--ddlc-series-2", "--ddlc-monika-eye", "--ddlc-series-3"];
+
+let pic = null;      // { w, h, rgba, chans, svds }
+let k = 1;
+let token = 0;
+
+const ru = (s) => s.replace(".", ",");
+const num = (x) => ru(x === 0 ? "0" : (Math.abs(x) < 0.01 || x >= 1e5 ? x.toExponential(2) : x.toPrecision(4)));
+const chan = () => +$("ch").value;
+
+function setStatus(text) { $("status").textContent = text; }
+
+function putPicture(canvas, rgba, w, h) {
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+}
+
+// What a canvas shows: all three channels, or one of them as a grey picture.
+function shown(chans, w, h) {
+  const v = $("view").value;
+  return v === "rgb" ? mergeChannels(chans, w, h) : mergeChannels([chans[+v], chans[+v], chans[+v]], w, h);
+}
+
+function render() {
+  if (!pic) return;
+  const { w, h, chans, svds } = pic;
+  const p = Math.min(w, h);
+  k = Math.min(Math.max(k, 1), p);
+  $("k").value = k; $("kval").textContent = k;
+  const xs = svds.map((s) => lowRank(s, k));
+  putPicture($("orig"), shown(chans, w, h), w, h);
+  putPicture($("approx"), shown(xs, w, h), w, h);
+  $("approxcap").textContent = `Сумма первых k = ${k} слагаемых`;
+  $("formula").innerHTML = `X = Σ<sub>j≤${k}</sub> ρ<sub>j</sub> q<sup>j</sup> ⊗ e<sup>j</sup>, матрица канала ${h} × ${w}, ранг не выше ${k}`;
+
+  const per = storage(h, w, k);
+  $("memory").innerHTML = [
+    ["Размер канала m × n", `${h} × ${w} = ${(h * w).toLocaleString("ru")}`],
+    ["Память k(m + n + 1) на канал", per.toLocaleString("ru")],
+    ["Доля от mn", `${ru((100 * storageFraction(h, w, k)).toFixed(1))} %`],
+    ["Три канала вместе", `${(3 * per).toLocaleString("ru")} из ${(3 * h * w).toLocaleString("ru")}`],
+  ].map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join("");
+
+  const rows = xs.map((x, c) => {
+    const bound = spectralError(svds[c], k), real = maxAbsDiff(chans[c], x);
+    const ok = real <= bound + 1e-9 * Math.max(svds[c].rho[0], 1e-300);
+    return `<tr><td class="${CLASSES[c]}">${NAMES[c]}</td><td>${num(bound)}</td><td>${num(real)}</td><td class="${ok ? "" : "bad"}">${ok ? "да" : "нет"}</td></tr>`;
+  }).join("");
+  $("errors").innerHTML = `<table><tr><th>Канал</th><th>ρ<sub>k+1</sub></th><th>max |a<sub>ij</sub> − x<sub>ij</sub>|</th><th>max ≤ ρ<sub>k+1</sub></th></tr>${rows}</table>`;
+  drawChart();
+}
+
+function drawChart() {
+  const cv = $("chart");
+  const cssW = Math.max(240, cv.getBoundingClientRect().width || 600), cssH = Math.round(cssW * 0.5);
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cssW, cssH);
+  if (!pic) return;
+  const text = css("--text-2"), grid = css("--grid"), mark = css("--mark");
+  const p = Math.min(pic.w, pic.h);
+  const L = 50, R = 12, T = 10, B = 26;
+  let top = 0, low = Infinity;
+  for (const s of pic.svds) { top = Math.max(top, s.rho[0]); for (const x of s.rho) if (x > 0) low = Math.min(low, x); }
+  const hi = Math.ceil(Math.log10(Math.max(top, 1e-12)));
+  const lo = Math.max(Math.floor(Math.log10(low)), hi - 8);
+  const X = (j) => L + (p > 1 ? (j - 1) / (p - 1) : 0.5) * (cssW - L - R);
+  const Y = (v) => T + (hi - Math.log10(Math.max(v, 10 ** lo))) / (hi - lo || 1) * (cssH - T - B);
+  g.font = "500 11px " + getComputedStyle(document.body).fontFamily;
+  g.textBaseline = "middle";
+  g.lineWidth = 1;
+  for (let d = lo; d <= hi; d++) {
+    g.strokeStyle = grid; g.beginPath(); g.moveTo(L, Y(10 ** d)); g.lineTo(cssW - R, Y(10 ** d)); g.stroke();
+    g.fillStyle = text; g.textAlign = "right"; g.fillText(`10${d < 0 ? "−" : ""}${String(Math.abs(d)).split("").map((c) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[+c]).join("")}`, L - 6, Y(10 ** d));
+  }
+  g.textAlign = "center"; g.textBaseline = "top"; g.fillStyle = text;
+  const perLabel = 42 * (p - 1) / (cssW - L - R);
+  const step = [1, 2, 5, 10, 20, 50, 100, 200, 500].find((s) => s >= perLabel) || 500;
+  for (let j = step; j <= p; j += step) g.fillText(String(j), X(j), cssH - B + 6);
+  // current k
+  g.strokeStyle = mark; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(X(k), T); g.lineTo(X(k), cssH - B); g.stroke(); g.setLineDash([]);
+  const sel = chan();
+  [0, 1, 2].forEach((c) => {
+    g.strokeStyle = css(VARS[c]); g.lineWidth = c === sel ? 2.2 : 1; g.globalAlpha = c === sel ? 1 : 0.55;
+    g.beginPath();
+    let pen = false;
+    pic.svds[c].rho.forEach((v, i) => { if (v > 0) { pen ? g.lineTo(X(i + 1), Y(v)) : g.moveTo(X(i + 1), Y(v)); pen = true; } });
+    g.stroke();
+  });
+  g.globalAlpha = 1; g.lineWidth = 2;
+  const s = pic.svds[sel];
+  g.fillStyle = mark; g.strokeStyle = mark;
+  g.beginPath(); g.arc(X(k), Y(s.rho[k - 1]), 4, 0, 2 * Math.PI); g.fill();
+  if (k < p && s.rho[k] > 0) { g.fillStyle = css("--surface"); g.beginPath(); g.arc(X(k + 1), Y(s.rho[k]), 4, 0, 2 * Math.PI); g.fill(); g.stroke(); }
+  $("legend").innerHTML = [0, 1, 2].map((c) => `<span class="${CLASSES[c]}"><i style="background:currentColor"></i>${NAMES[c]}</span>`).join("")
+    + `<span><span class="dot fill"></span>ρ<sub>k</sub> канала ${NAMES[sel]}</span><span><span class="dot"></span>ρ<sub>k+1</sub>, ошибка</span>`
+    + `<span>по горизонтали номер j, по вертикали ρ<sub>j</sub> в логарифмической шкале, пунктир на k</span>`;
+}
+
+async function load(rgba, w, h) {
+  const mine = ++token;
+  setStatus("Считаю разложение, канал R…");
+  await new Promise((r) => setTimeout(r, 30));
+  const chans = splitChannels(rgba, w, h);
+  const svds = [];
+  for (let c = 0; c < 3; c++) {
+    if (mine !== token) return;
+    setStatus(`Считаю разложение, канал ${NAMES[c]}…`);
+    await new Promise((r) => setTimeout(r, 30));
+    svds.push(svd(chans[c], h, w));
+  }
+  if (mine !== token) return;
+  const p = Math.min(w, h);
+  pic = { w, h, rgba, chans, svds };
+  $("k").max = p; $("kmax").textContent = p;
+  k = Math.min(k, p);
+  setStatus("");
+  render();
+}
+
+function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const { w, h } = fitSize(img.naturalWidth, img.naturalHeight, MAX_SIDE);
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const g = cv.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+    g.drawImage(img, 0, 0, w, h);
+    load(g.getImageData(0, 0, w, h).data, w, h);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); setStatus("Файл не читается как картинка"); };
+  img.src = url;
+}
+
+$("k").addEventListener("input", () => { k = +$("k").value; render(); });
+$("ch").addEventListener("input", drawChart);
+$("view").addEventListener("input", render);
+$("builtin").addEventListener("click", () => { $("pick").value = ""; load(syntheticImage(240, 160), 240, 160); });
+$("pick").addEventListener("change", () => { const f = $("pick").files[0]; if (f) loadFile(f); });
+function fromChart(ev) {
+  if (!pic) return;
+  const r = $("chart").getBoundingClientRect(), p = Math.min(pic.w, pic.h);
+  const fx = (ev.clientX - r.left - 50) / (r.width - 62);
+  k = Math.min(p, Math.max(1, Math.round(1 + fx * (p - 1))));
+  render();
+}
+$("chart").addEventListener("pointerdown", (ev) => { $("chart").setPointerCapture(ev.pointerId); fromChart(ev); });
+$("chart").addEventListener("pointermove", (ev) => { if (ev.buttons) fromChart(ev); });
+window.addEventListener("resize", drawChart);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawChart);
+
+k = 8;
+load(syntheticImage(240, 160), 240, 160);
+</script>
+</body>
+</html>

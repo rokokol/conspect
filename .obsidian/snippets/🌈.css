@@ -1,0 +1,68 @@
+.rainbow-text {
+  background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
+  background-size: 1400% 1400%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: rainbowAnim 12s linear infinite;
+  display: inline-block;
+  animation-name: rainbowAnim, bounceLetters;
+  animation-duration: 12s, 3s;
+  animation-timing-function: linear, ease-in-out;
+  animation-iteration-count: infinite, infinite;
+}
+
+@keyframes rainbowAnim {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes bounceLetters {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+
+/* Флаг России: белый, синий, красный плавный градиент */
+.russia-text {
+  background: linear-gradient(90deg,
+    #fff 0%, #fff 33.3%,
+    #0000ff 33.3%, #0000ff 66.6%,
+    #ff0000 66.6%, #ff0000 100%);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: flagAnim 8s ease infinite;
+}
+
+/* Флаг Украины: голубой и желтый плавный градиент */
+.ukraine-text {
+  background: linear-gradient(90deg,
+    #0057b7 0%, #0057b7 50%,
+    #ffd700 50%, #ffd700 100%);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: flagAnim 8s ease infinite;
+}
+
+/* Флаг трансгендеров */
+.trans-text {
+  background: linear-gradient(90deg,
+    #55CDFC 0%, #55CDFC 20%,
+    #F7A8B8 20%, #F7A8B8 40%,
+    #FFFFFF 40%, #FFFFFF 60%,
+    #F7A8B8 60%, #F7A8B8 80%,
+    #55CDFC 80%, #55CDFC 100%);
+  background-size: 500% 500%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: flagAnim 10s ease infinite;
+}
+
+@keyframes flagAnim {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+

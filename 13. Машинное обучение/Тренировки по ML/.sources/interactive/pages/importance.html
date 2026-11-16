@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница важности признаков</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; min-width: 0; }
+.feats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.feats .row { gap: 6px; }
+button:disabled, input:disabled, select:disabled { opacity: 0.45; cursor: default; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+table.sweep th, table.sweep td { white-space: nowrap; }
+table.sweep td[colspan] { white-space: normal; text-align: left; }
+.rng { color: var(--text-2); font-size: 11px; }
+.plots > * { min-width: 0; }
+#sweepOut { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница важности признаков</h1>
+  <p class="lead">Бинарная классификация на синтетической таблице: полезные x₁ (км) и x₂, полезный бинарный flag, шум noise_num (своё значение в каждой строке), шум noise_cat (три значения) и копия x₁ с заданной корреляцией. Слева от столбцов — признаки, затенены шумовые</p>
+  <p class="lead">Модель обучают на обучающей части, impurity считают по ней же, permutation и drop column — на отложенной части, которая в обучении не участвовала. Значения сравнивай по рангам и отрыву от шума, шкалы у методов разные</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="cv" width="760" height="330" aria-label="Важности признаков тремя методами"></canvas>
+      <div id="facts" class="score"></div>
+      <div id="sweepOut"></div>
+    </div>
+    <div class="panel">
+      <label>Модель
+        <select id="model">
+          <option value="forest">Случайный лес</option>
+          <option value="tree">Одно дерево</option>
+          <option value="linear">Логистическая регрессия</option>
+        </select>
+      </label>
+      <div>
+        <div class="note" style="margin-bottom:4px">Признаки в таблице</div>
+        <div class="feats" id="feats"></div>
+      </div>
+      <label>Корреляция копии с x₁: <b id="corrv"></b>
+        <input id="corr" type="range" min="0.5" max="1" step="0.01" value="1">
+      </label>
+      <label>Единица x₁ и копии
+        <select id="unit"><option value="km">километры</option><option value="m">метры</option></select>
+      </label>
+      <label>Максимальная глубина: <b id="dv"></b>
+        <input id="depth" type="range" min="1" max="15" value="15">
+      </label>
+      <label>min_samples_leaf: <b id="lv"></b>
+        <input id="leaf" type="range" min="1" max="40" value="1">
+      </label>
+      <label>Повторов перемешивания K = <b id="kv"></b>
+        <input id="reps" type="range" min="1" max="30" value="10">
+      </label>
+      <div class="two">
+        <button id="reseed">Другой seed</button>
+        <button id="sweep">Прогнать seed</button>
+      </div>
+      <div class="score" id="score"></div>
+      <div id="about"></div>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+const N_ROWS = 600, N_TRAIN = 420, N_TREES = 30, MAX_REPS = 30, SWEEP = 20;
+// Labels as in the notes; the copy follows the unit of x1.
+const FEAT_LABEL = ["x₁", "x₂", "flag", "noise_num", "noise_cat", "копия x₁"];
+const IS_NOISE = [false, false, false, true, true, false];
+const DEFAULT_ON = [true, true, true, true, true, false];
+let seed = 1, sweepRun = 0, dropToken = 0;
+const modelCache = new Map(), dropCache = new Map(), tableCache = new Map();
+
+(() => {
+  $("feats").innerHTML = FEAT_LABEL.map((l, j) =>
+    `<div class="row"><input id="f${j}" type="checkbox"${DEFAULT_ON[j] ? " checked" : ""}><span>${l}</span></div>`).join("");
+})();
+
+function settings() {
+  const cols = FEAT_LABEL.map((_, j) => j).filter((j) => $("f" + j).checked);
+  const d = +$("depth").value;
+  return { model: $("model").value, cols, corr: +$("corr").value, unit: $("unit").value,
+    depth: d >= 15 ? Infinity : d, leaf: +$("leaf").value, reps: +$("reps").value };
+}
+
+// The part of the settings that changes the fitted model and the tables.
+// The unit is in the key for every model: a tree is refitted in metres and
+// gives the same importances, the page shows that.
+function modelKey(s, sd) {
+  const tree = s.model !== "linear";
+  return [s.model, s.cols.join(""), s.cols.includes(5) ? s.corr : "-", s.unit, tree ? s.depth : "-", tree ? s.leaf : "-", sd].join("|");
+}
+
+function table(sd, corr) {
+  const k = sd + "|" + corr;
+  if (!tableCache.has(k)) tableCache.set(k, makeImportanceTable(N_ROWS, sd, { corr }));
+  return tableCache.get(k);
+}
+
+function pickTables(s, sd) {
+  const t = table(sd, s.cols.includes(5) ? s.corr : 0);
+  const X = s.unit === "m" ? scaleColumns(t.X, { 0: 1000, 5: 1000 }) : t.X;
+  const pick = (rows) => rows.map((r) => s.cols.map((j) => r[j]));
+  return { Xtr: pick(X.slice(0, N_TRAIN)), ytr: t.y.slice(0, N_TRAIN), Xte: pick(X.slice(N_TRAIN)), yte: t.y.slice(N_TRAIN) };
+}
+
+// fit(X, y) -> predict(x) -> label, for the chosen model; the forest and the tree
+// shuffle the feature order at every node, so an exact copy wins a split by chance.
+function makeFit(s, sd) {
+  const P = (X) => X[0].length;
+  if (s.model === "linear") {
+    return (X, y) => { const m = fitLogreg(X, y, { C: 1 }); return Object.assign((x) => (logregDecision(m, x) > 0 ? 1 : 0), { m }); };
+  }
+  if (s.model === "tree") {
+    return (X, y) => { const t = fitTree(X, y, { maxDepth: s.depth, minLeaf: s.leaf, rnd: rng(100 + sd), shuffleFeatures: true }); return Object.assign((x) => treePredict(t, x), { t }); };
+  }
+  return (X, y) => {
+    const f = fitForest(X, y, { nTrees: N_TREES, maxDepth: s.depth, minLeaf: s.leaf, maxFeatures: Math.max(1, Math.round(Math.sqrt(P(X)))), shuffleFeatures: true, seed: 100 + sd });
+    return Object.assign((x) => { const q = forestProba(f, x); return q[1] > q[0] ? 1 : 0; }, { f });
+  };
+}
+
+// Everything but drop column: the fitted model, what it reads out of itself, and the permutation scores for MAX_REPS repeats.
+function build(s, sd) {
+  const key = modelKey(s, sd);
+  if (modelCache.has(key)) return modelCache.get(key);
+  const d = pickTables(s, sd), fit = makeFit(s, sd), predict = fit(d.Xtr, d.ytr), P = s.cols.length;
+  const out = { key, d, fit, predict, P };
+  const acc = (X, y) => accuracy(X.map(predict), y);
+  out.trainAcc = acc(d.Xtr, d.ytr); out.testAcc = acc(d.Xte, d.yte);
+  if (s.model === "tree") out.mdi = treeImportance(predict.t, P);
+  if (s.model === "forest") out.mdi = forestImportance(predict.f, P);
+  if (s.model === "linear") out.weights = logregWeights(predict.m, d.Xtr);
+  out.perm = permutationImportance(acc, d.Xte, d.yte, randomPerms(d.Xte.length, MAX_REPS, rng(900 + sd)));
+  modelCache.set(key, out);
+  return out;
+}
+
+const mean = (v) => v.reduce((a, b) => a + b, 0) / v.length;
+const sd0 = (v) => { const m = mean(v); return Math.sqrt(mean(v.map((a) => (a - m) ** 2))); };
+function permStats(b, K) {
+  const rows = b.perm.importances.map((r) => r.slice(0, K));
+  return { mean: rows.map(mean), std: rows.map(sd0) };
+}
+
+function featLabels(s) {
+  return s.cols.map((j) => (j === 0 ? `x₁ (${s.unit === "m" ? "м" : "км"})` : FEAT_LABEL[j]));
+}
+
+// One panel: horizontal bars, one row per feature, zero line, value at the right.
+// Importances are not classes: bars are neutral, whiskers are the std over repeats.
+function drawPanel(c, box, p, labels, noise) {
+  const { x0, y0, w, rowH } = box, valW = 56, ax0 = x0 + 8, ax1 = x0 + w - valW;
+  c.save();
+  c.fillStyle = css("--text-2"); c.font = font(13); c.textAlign = "left"; c.textBaseline = "top";
+  c.fillText(p.title, x0, y0); c.fillText(p.sub, x0, y0 + 16);
+  const top = y0 + 36;
+  const lo0 = Math.min(0, ...p.values.map((v, i) => (v === v ? v - (p.err ? p.err[i] : 0) : 0)));
+  const hi0 = Math.max(0, ...p.values.map((v, i) => (v === v ? v + (p.err ? p.err[i] : 0) : 0)));
+  const lo = lo0, hi = hi0 > lo0 ? hi0 : lo0 + 1;
+  const px = (v) => ax0 + ((v - lo) / (hi - lo)) * (ax1 - ax0);
+  p.values.forEach((v, i) => {
+    const y = top + i * rowH, cy = y + rowH / 2;
+    if (noise[i]) { c.fillStyle = css("--grid"); c.globalAlpha = 0.55; c.fillRect(x0, y, w, rowH); c.globalAlpha = 1; }
+    c.fillStyle = css("--text"); c.textAlign = "right"; c.textBaseline = "middle"; c.font = font(13);
+    if (v !== v) { c.fillText("–", x0 + w, cy); return; }
+    c.fillText(num(v, 2), x0 + w, cy);
+    c.fillStyle = css("--text-2");
+    c.fillRect(Math.min(px(0), px(v)), cy - rowH * 0.28, Math.abs(px(v) - px(0)), rowH * 0.56);
+    if (p.err) {
+      c.strokeStyle = css("--text"); c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(px(v - p.err[i]), cy); c.lineTo(px(v + p.err[i]), cy);
+      c.moveTo(px(v - p.err[i]), cy - 4); c.lineTo(px(v - p.err[i]), cy + 4);
+      c.moveTo(px(v + p.err[i]), cy - 4); c.lineTo(px(v + p.err[i]), cy + 4);
+      c.stroke();
+    }
+  });
+  c.strokeStyle = css("--text"); c.lineWidth = 1;
+  c.beginPath(); c.moveTo(px(0), top); c.lineTo(px(0), top + p.values.length * rowH); c.stroke();
+  if (p.pending) {
+    c.fillStyle = css("--text-2"); c.textAlign = "left"; c.textBaseline = "middle";
+    c.fillText("считаю…", ax0, top + (p.values.length * rowH) / 2);
+  }
+  c.restore();
+}
+
+function drawAll(s, b, panels) {
+  const labelW = 124, gap = 10, W = cv.width, nCol = 3, rowH = 28;
+  const panelW = (W - labelW - gap * nCol) / nCol, rowsPerPanel = b.P, blockH = 36 + rowsPerPanel * rowH + 18;
+  const lines = Math.ceil(panels.length / nCol);
+  cv.height = lines * blockH + 6;
+  const c = ctx, labels = featLabels(s), noise = s.cols.map((j) => IS_NOISE[j]);
+  c.clearRect(0, 0, cv.width, cv.height);
+  for (let line = 0; line < lines; line++) {
+    const y0 = 4 + line * blockH;
+    c.save();
+    c.font = font(13); c.fillStyle = css("--text"); c.textAlign = "left"; c.textBaseline = "middle";
+    labels.forEach((l, i) => {
+      const y = y0 + 36 + i * rowH;
+      if (noise[i]) { c.fillStyle = css("--grid"); c.globalAlpha = 0.55; c.fillRect(0, y, labelW - 6, rowH); c.globalAlpha = 1; }
+      c.fillStyle = css("--text"); mathText(c, l, 2, y + rowH / 2);
+    });
+    c.restore();
+    for (let k = 0; k < nCol; k++) {
+      const p = panels[line * nCol + k];
+      if (p) drawPanel(c, { x0: labelW + k * (panelW + gap), y0, w: panelW, rowH }, p, labels, noise);
+    }
+  }
+}
+
+function dropOf(s, b) {
+  const key = b.key + "|drop";
+  if (!dropCache.has(key)) dropCache.set(key, dropColumn(b.fit, b.d.Xtr, b.d.ytr, b.d.Xte, b.d.yte).importances);
+  return dropCache.get(key);
+}
+
+function panelsFor(s, b, drop) {
+  const K = s.reps, ps = permStats(b, K);
+  const panels = [];
+  if (s.model === "linear") {
+    const w = b.weights;
+    panels.push({ title: "вес w", sub: "в единицах признака", values: w.raw });
+    // x₁ in metres makes its raw weight a thousand times smaller than the others: its bar disappears, as in the note.
+    panels.push({ title: "вес w·σ", sub: "после стандартизации", values: w.std });
+    panels.push({ title: "β = w·σ / σ(логит)", sub: "на обучающей части", values: w.beta });
+  } else {
+    panels.push({ title: "impurity (MDI)", sub: "обучающая часть", values: b.mdi });
+  }
+  panels.push({ title: "permutation", sub: `отложенная; ± std, K=${K}`, values: ps.mean, err: ps.std });
+  panels.push({ title: "drop column", sub: "отложенная; пересборка", values: drop || b.d.Xtr[0].map(() => 0), pending: !drop });
+  return panels;
+}
+
+function factsHtml(s, b, drop, ps) {
+  const at = (j) => s.cols.indexOf(j), have = (...js) => js.every((j) => at(j) >= 0);
+  const f = (v) => num(v, 2), rows = [];
+  const add = (a, v) => rows.push(`<span>${a}</span><span>${v}</span>`);
+  add("Точность: обучение / отложенная", `${toComma(b.trainAcc, 3)} / ${toComma(b.testAcc, 3)}`);
+  if (b.mdi && have(3, 4)) add("impurity: noise_num / noise_cat", `${f(b.mdi[at(3)])} / ${f(b.mdi[at(4)])}`);
+  if (b.mdi && have(3, 2)) add("impurity: noise_num против flag", b.mdi[at(3)] > b.mdi[at(2)] ? "шум выше сигнала" : "шум ниже сигнала");
+  if (have(3)) add("permutation: noise_num", `${f(ps.mean[at(3)])} ± ${f(ps.std[at(3)])}`);
+  if (have(3, 2)) add("permutation: noise_num против flag", ps.mean[at(3)] > ps.mean[at(2)] ? "шум выше сигнала" : "шум ниже сигнала");
+  if (have(0, 5)) {
+    const i = at(0), q = at(5);
+    if (b.mdi) add("impurity: x₁ + копия", `${f(b.mdi[i])} + ${f(b.mdi[q])} = ${f(b.mdi[i] + b.mdi[q])}`);
+    add("permutation: x₁ + копия", `${f(ps.mean[i])} + ${f(ps.mean[q])}`);
+    add("drop column: x₁ + копия", drop ? `${f(drop[i])} + ${f(drop[q])}` : "считаю…");
+  }
+  return rows.join("");
+}
+
+function update() {
+  const s = settings();
+  $("corrv").textContent = s.corr >= 1 ? "1,00 (точная копия)" : toComma(s.corr, 2);
+  $("dv").textContent = s.depth === Infinity ? "без ограничения" : s.depth;
+  $("lv").textContent = s.leaf; $("kv").textContent = s.reps;
+  const tree = s.model !== "linear";
+  ["depth", "leaf"].forEach((id) => ($(id).disabled = !tree));
+  $("corr").disabled = !s.cols.includes(5);
+  if (!s.cols.length) { $("f0").checked = true; return update(); }
+  const b = build(s, seed), ps = permStats(b, s.reps);
+  const cached = dropCache.get(b.key + "|drop");
+  drawAll(s, b, panelsFor(s, b, cached));
+  $("facts").innerHTML = factsHtml(s, b, cached, ps);
+  $("score").innerHTML = `<span>seed</span><span>${seed}</span><span>Объектов</span><span>${N_TRAIN} + ${N_ROWS - N_TRAIN}</span>`;
+  $("about").innerHTML = aboutText(s).map((t) => `<p class="note">${t}</p>`).join("");
+  if (!cached) {
+    const token = ++dropToken;
+    $("facts").innerHTML = factsHtml(s, b, null, ps);
+    setTimeout(() => {
+      if (token !== dropToken) return;
+      dropOf(s, b);
+      drawAll(s, b, panelsFor(s, b, dropCache.get(b.key + "|drop")));
+      $("facts").innerHTML = factsHtml(s, b, dropCache.get(b.key + "|drop"), ps);
+    }, 20);
+  }
+}
+
+function aboutText(s) {
+  const model = s.model === "linear"
+    ? "Логистическая регрессия учится на стандартизованных признаках с C = 1, поэтому смена единицы меняет только вес в исходных единицах, а не модель. β здесь — вес после стандартизации, делённый на стандартное отклонение логита: у бинарного таргета нет своей шкалы, на которую делить, как делят на std(y) в регрессии"
+    : s.model === "tree"
+      ? "Дерево CART с критерием Джини; при равном приросте у двух столбцов (точная копия) признак выбирается случайным порядком перебора, как в sklearn"
+      : `Лес из ${N_TREES} деревьев на бутстрепе, max_features = √(число признаков), округлённо; drop column переобучает такой же лес без столбца, поэтому у него видна и случайность обучения`;
+  return [
+    model,
+    `Одна таблица: ${N_TRAIN} объектов на обучение и ${N_ROWS - N_TRAIN} в отложенной части; число объектов мало, поэтому усы и шумовые значения заметны. Параметры дерева выбирают по кросс-валидации на обучающей части, а не по отложенной точности, которую страница лишь показывает`,
+    `Кнопка "Другой seed" перегенерирует таблицу и модель: что держится на любом seed, а что нет — видно по ней и по прогону из ${SWEEP} seed`,
+  ];
+}
+
+// ${SWEEP} seeds with the current settings: mean and range of every importance,
+// and in how many seeds the comparisons of the facts hold.
+function runSweep() {
+  const s = settings(), run = ++sweepRun, rows = [];
+  $("sweep").disabled = true;
+  const out = $("sweepOut"), at = (j) => s.cols.indexOf(j), have = (...js) => js.every((j) => at(j) >= 0);
+  const step = (sd) => {
+    if (run !== sweepRun) return;
+    if (sd > SWEEP) return finish();
+    out.innerHTML = `<p class="note">прогон seed ${sd} из ${SWEEP}…</p>`;
+    const b = build(s, sd);
+    rows.push({ mdi: b.mdi, perm: permStats(b, s.reps).mean, drop: dropOf(s, b) });
+    setTimeout(() => step(sd + 1), 0);
+  };
+  const finish = () => {
+    $("sweep").disabled = false;
+    const cell = (sel) => (j) => {
+      const v = rows.map((r) => sel(r)[j]).filter((x) => x === x);
+      return v.length ? `${num(mean(v), 2)}<br><span class="rng">${num(Math.min(...v), 2)} … ${num(Math.max(...v), 2)}</span>` : "–";
+    };
+    const hasMdi = !!rows[0].mdi;
+    const body = s.cols.map((c, j) => `<tr><td>${featLabels(s)[j]}</td>` +
+      (hasMdi ? `<td>${cell((r) => r.mdi)(j)}</td>` : "") + `<td>${cell((r) => r.perm)(j)}</td><td>${cell((r) => r.drop)(j)}</td></tr>`).join("");
+    const count = (name, pred) => `<tr><td colspan="${hasMdi ? 4 : 3}">${name}: <b>${rows.filter(pred).length}</b> из ${SWEEP}</td></tr>`;
+    let counts = "";
+    if (hasMdi && have(3, 4)) counts += count("impurity: noise_num больше noise_cat", (r) => r.mdi[at(3)] > r.mdi[at(4)]);
+    if (hasMdi && have(3, 2)) counts += count("impurity: noise_num больше flag", (r) => r.mdi[at(3)] > r.mdi[at(2)]);
+    if (have(3, 4)) counts += count("permutation: noise_num больше noise_cat", (r) => r.perm[at(3)] > r.perm[at(4)]);
+    if (have(3, 2)) counts += count("permutation: noise_num больше flag", (r) => r.perm[at(3)] > r.perm[at(2)]);
+    out.innerHTML = `<table class="compact sweep"><tr><th>seed 1…${SWEEP}: среднее, ниже мин … макс</th>${hasMdi ? "<th>impurity</th>" : ""}<th>permutation</th><th>drop column</th></tr>${body}${counts}</table>` +
+      `<p class="note">Прогон с текущими настройками модели и K = ${s.reps} повторов; каждый seed — своя таблица, свой лес и свои перемешивания. Счётчики показывают, на скольких seed держится каждое сравнение. Если оба признака лежат около нуля, порядок между ними случаен и выводом не служит: смотри на среднее и разброс</p>`;
+  };
+  setTimeout(() => step(1), 20);
+}
+
+["model", "corr", "unit", "depth", "leaf", "reps"].forEach((id) => $(id).addEventListener("input", update));
+FEAT_LABEL.forEach((_, j) => $("f" + j).addEventListener("input", update));
+$("reseed").addEventListener("click", () => { seed++; update(); });
+$("sweep").addEventListener("click", runSweep);
+onTheme(update);
+update();
+</script>
+</body>
+</html>

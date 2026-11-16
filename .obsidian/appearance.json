@@ -1,0 +1,23 @@
+{
+  "cssTheme": "DDLC",
+  "enabledCssSnippets": [
+    "align-images-left",
+    "🌈",
+    "align-media-left",
+    "textes",
+    "tv-static",
+    "ddlc-stickers",
+    "ddlc-nerd",
+    "obsidian-nunito-black",
+    "ddlc-nunito-headings"
+  ],
+  "baseFontSizeAction": true,
+  "baseFontSize": 15,
+  "nativeMenus": false,
+  "accentColor": "#ff9496",
+  "showRibbon": false,
+  "theme": "system",
+  "interfaceFontFamily": "Mya Nunito Static Black,Nunito",
+  "textFontFamily": "Mya Nunito,Nunito",
+  "monospaceFontFamily": "DepartureMono Nerd Font Mono"
+}

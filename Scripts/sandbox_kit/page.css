@@ -1,0 +1,83 @@
+/* Page roles over the vendored ddlc-report.css and palette.css: no hex here.
+   Classes follow the static figures: class 0 is series-3 (rule), class 1 is
+   series-2 (bow), an adjacent pair the theme validated for colour blindness;
+   a third class takes monikaEye directly, because the dark report collapses
+   series-4 into grey and a class must keep its hue in both themes. */
+:root {
+  color-scheme: light dark;
+  --surface: var(--ddlc-ground); --panel: var(--ddlc-code-ground); --text: var(--ddlc-text);
+  --text-2: var(--ddlc-muted); --line: var(--ddlc-line); --grid: var(--ddlc-grid);
+  --c0: var(--ddlc-series-3); --c1: var(--ddlc-series-2); --c1m: var(--ddlc-series-2); --c2: var(--ddlc-monika-eye);
+  --c3: var(--ddlc-series-1); --train: var(--ddlc-series-1); --test: var(--ddlc-series-2);
+  --model: var(--ddlc-series-3); --model-2: var(--ddlc-monika-eye);
+  --mid: var(--ddlc-ground); --accent: var(--ddlc-accent);
+  /* --accent is plum, the same hue as --train: it belongs to controls only.
+     --mark is ink: what the page singles out in the data (a clicked point,
+     an outlier, the threshold, the optimum), as in the static figures. */
+  --mark: var(--ddlc-text);
+}
+* { box-sizing: border-box; }
+/* The faces and their stacks are the report's: Mya Nunito for prose and, with the attribute
+   build_page sets, for headings; Departure Mono for data. Prose is Medium and bold is Black,
+   both from one variable face. Departure Mono has one weight, so no face is ever emboldened
+   by synthesis */
+body { margin: 0; padding: 0; max-width: none; background: var(--surface); color: var(--text); font: 500 15px/1.45 var(--ddlc-font-prose); font-synthesis-weight: none; }
+main { max-width: 980px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; border: 0; padding: 0; }
+h2 { font-size: 16px; line-height: 1.3; }
+input, select, textarea { font-family: inherit; font-weight: inherit; }
+p.lead { margin: 0 0 14px; color: var(--text-2); }
+.wrap { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+canvas { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; touch-action: none; }
+canvas.square { aspect-ratio: 1; }
+canvas.wide { aspect-ratio: 2 / 1; }
+.panel { background: var(--panel); border-radius: 8px; padding: 14px; display: grid; gap: 14px; }
+label { display: block; font-size: 14px; color: var(--text-2); }
+label > input, label > select { display: block; margin-top: 4px; }
+.panel > * { min-width: 0; }
+label b { color: var(--text); font-variant-numeric: tabular-nums; }
+input[type=range], select { width: 100%; accent-color: var(--accent); }
+select { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px; }
+button { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; }
+/* A field for a formula or a number, in the data face: an input with no type is a text field
+   too. A page marks a value it cannot read with aria-invalid, which a screen reader announces */
+input:not([type]), input[type=text], input[type=number] { width: 100%; font: inherit; font-family: var(--ddlc-font-data); color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 5px 6px; }
+input[aria-invalid=true] { border-color: var(--ddlc-series-2); outline: 1px solid var(--ddlc-series-2); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+[hidden] { display: none !important; }
+/* A panel's sections and the results column, as grids whose children may shrink */
+.sec { display: grid; gap: 8px; min-width: 0; }
+.sec > * { min-width: 0; }
+.main { display: grid; gap: 22px; min-width: 0; }
+.main > section { display: grid; gap: 8px; min-width: 0; }
+.main > section > * { min-width: 0; }
+/* A slider with its value on one line */
+.ctl { display: flex; gap: 8px; align-items: center; }
+.ctl input[type=range] { flex: 1; }
+/* A formula the page writes out */
+.formula { padding: 8px 10px; background: var(--panel); border-radius: 6px; overflow-wrap: anywhere; line-height: 1.7; }
+/* A message under a field: an error, or with .info a hint, hidden while empty */
+.err { color: var(--ddlc-series-2); font-size: 13px; margin: 0; }
+.err:empty { display: none; }
+.err.info { color: var(--text-2); }
+/* A warning over the result, hidden while empty, and a value the page confirms */
+.warn { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--panel); border-left: 4px solid var(--ddlc-series-2); }
+.warn:empty { display: none; }
+.ok { color: var(--ddlc-monika-eye); }
+.row { display: flex; gap: 8px; align-items: center; color: var(--text-2); font-size: 14px; }
+.score { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 2px 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.score span:nth-child(odd) { color: var(--text-2); white-space: nowrap; }
+.score span:nth-child(even) { text-align: right; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+td, th { padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+th { color: var(--text-2); font: inherit; font-weight: normal; white-space: nowrap; }
+td:first-child, th:first-child { text-align: left; }
+tr.sel td, tr.win td { color: var(--text); }
+table.compact { font-size: 12px; }
+table.compact td, table.compact th { padding: 2px 3px; }
+.note { font-size: 13px; color: var(--text-2); margin: 0; }
+.note code { overflow-wrap: anywhere; }
+.note + .note { margin-top: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-2); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }

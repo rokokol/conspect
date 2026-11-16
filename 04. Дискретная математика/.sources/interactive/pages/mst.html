@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница кратчайшего остовного дерева</title>
+<style>
+/*COMMON_CSS*/
+svg.graph { width: 100%; max-width: 440px; height: auto; display: block; margin: 0 auto; touch-action: none; }
+svg.graph .vtx { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+svg.graph .vnum { fill: var(--text); font: 500 14px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; }
+svg.graph .wt { fill: var(--text); font: 500 13px var(--ddlc-font-prose); text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--surface); stroke-width: 5px; }
+svg.graph .e-pending { stroke: var(--grid); stroke-width: 1.5; }
+svg.graph .e-closing { stroke: var(--text-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg.graph .e-cand { stroke: var(--c0); stroke-width: 3.5; }
+svg.graph .e-chosen { stroke: var(--accent); stroke-width: 6; stroke-linecap: round; }
+.keyline { display: inline-block; width: 26px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 6px; }
+.keyline.chosen { border-color: var(--accent); border-top-width: 6px; }
+.keyline.cand { border-color: var(--c0); }
+.keyline.closing { border-color: var(--text-2); border-top-style: dashed; border-top-width: 2px; }
+.keyline.pending { border-color: var(--grid); border-top-width: 2px; }
+.wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.wgrid label { font-size: 13px; }
+.wgrid input { padding: 3px 6px; margin-top: 2px; }
+button.cand { padding: 1px 6px; margin: 0 4px 2px 0; font-size: 13px; }
+button.cand.pick { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+tr.later td { color: var(--text-2); }
+details summary { cursor: pointer; color: var(--text-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница кратчайшего остовного дерева</h1>
+  <p class="lead">Полный граф с весами рёбер. Алгоритм на каждом шаге берёт самое лёгкое ребро, не замыкающее цикла с уже выбранными. Двигай шаги, меняй веса и при ничьей выбирай другое из самых лёгких рёбер: вес остова не изменится, а само дерево может</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Граф</h2>
+        <label>Число вершин n
+          <select id="n"><option>3</option><option>4</option><option selected>5</option><option>6</option></select>
+        </label>
+        <label>Готовый граф
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="note">K₅ из конспекта</option>
+            <option value="equal">все веса равны</option>
+            <option value="path">веса растут по номерам рёбер</option>
+          </select>
+        </label>
+      </div>
+      <div class="sec">
+        <h2>Веса рёбер</h2>
+        <div id="wgrid" class="wgrid"></div>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>Граф и шаги</h2>
+        <svg id="graph" class="graph" viewBox="30 30 340 340" role="img" aria-label="Полный граф с весами"></svg>
+        <div class="legend">
+          <span><span class="keyline chosen"></span>выбрано</span>
+          <span><span class="keyline cand"></span>самые лёгкие допустимые</span>
+          <span><span class="keyline closing"></span>замкнуло бы цикл</span>
+          <span><span class="keyline pending"></span>остальные</span>
+        </div>
+        <div class="ctl">
+          <button id="prev" aria-label="Шаг назад">←</button>
+          <input id="step" type="range" min="0" max="4" value="0" aria-label="Число сделанных шагов">
+          <button id="next" aria-label="Шаг вперёд">→</button>
+        </div>
+        <div id="stepinfo"></div>
+      </section>
+      <section>
+        <h2>Таблица шагов</h2>
+        <div id="steps"></div>
+        <p class="note">Среди допустимых рёбер наименьшего веса выбрано отмеченное. Щелчок по другому ребру в этой ячейке меняет выбор при ничьей</p>
+      </section>
+      <section>
+        <h2>Итог</h2>
+        <div id="result"></div>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+const NOTE_WEIGHTS = { "1,2": 1, "2,3": 2, "3,4": 2, "4,5": 3, "3,5": 3, "1,3": 2, "1,5": 4, "2,4": 5, "2,5": 5, "1,4": 6 };
+let n = 5;
+let weights = [];
+let picks = [];
+
+const edgeIndex = (a, b) => completeEdges(n).findIndex((e) => e[0] === a && e[1] === b);
+
+function loadPreset(name) {
+  const edges = completeEdges(n);
+  if (name === "note") {
+    n = 5;
+    const e5 = completeEdges(5);
+    weights = e5.map((e) => NOTE_WEIGHTS[e.join(",")]);
+    // The note takes (2,3) at step 2 and (4,5) at step 4, where it ties.
+    picks = [edgeIndex(1, 2), edgeIndex(2, 3), edgeIndex(3, 4), edgeIndex(4, 5)];
+  } else if (name === "equal") {
+    weights = edges.map(() => 1); picks = [];
+  } else {
+    weights = edges.map((_, i) => i + 1); picks = [];
+  }
+}
+
+function vertexPos(k) {
+  const a = -Math.PI / 2 + (2 * Math.PI * (k - 1)) / n;
+  return [200 + 150 * Math.cos(a), 200 + 150 * Math.sin(a)];
+}
+
+function renderGraph(v, run) {
+  const edges = completeEdges(n);
+  const chosen = new Set(run.chosen.slice(0, v));
+  const next = v < run.steps.length ? run.steps[v] : null;
+  const cand = new Set(next ? next.candidates : []);
+  const closing = new Set(next ? next.closing : edges.map((_, i) => i).filter((i) => !chosen.has(i)));
+  const order = (i) => (chosen.has(i) ? 3 : cand.has(i) ? 2 : closing.has(i) ? 1 : 0);
+  const idx = edges.map((_, i) => i).sort((p, q) => order(p) - order(q));
+  let s = "";
+  for (const i of idx) {
+    const [a, b] = edges[i];
+    const [x1, y1] = vertexPos(a), [x2, y2] = vertexPos(b);
+    const cls = chosen.has(i) ? "e-chosen" : cand.has(i) ? "e-cand" : closing.has(i) && v > 0 ? "e-closing" : "e-pending";
+    s += `<line class="${cls}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"></line>`;
+  }
+  for (const i of idx) {
+    const [a, b] = edges[i];
+    const [x1, y1] = vertexPos(a), [x2, y2] = vertexPos(b);
+    const adjacent = b - a === 1 || (a === 1 && b === n);
+    const t = adjacent ? 0.5 : (a + b) % 2 ? 0.3 : 0.7;
+    s += `<text class="wt" x="${x1 + (x2 - x1) * t}" y="${y1 + (y2 - y1) * t}">${weights[i]}</text>`;
+  }
+  for (let k = 1; k <= n; k++) {
+    const [x, y] = vertexPos(k);
+    s += `<circle class="vtx" cx="${x}" cy="${y}" r="15"></circle><text class="vnum" x="${x}" y="${y}">${k}</text>`;
+  }
+  $("graph").innerHTML = s;
+}
+
+function render() {
+  const edges = completeEdges(n);
+  $("n").value = n;
+  $("wgrid").innerHTML = edges.map((e, i) => `<label>${edgeText(e)}<input id="w${i}" type="number" min="0" max="99" step="1" value="${weights[i]}"></label>`).join("");
+  edges.forEach((_, i) => $("w" + i).addEventListener("input", () => {
+    const x = parseInt($("w" + i).value, 10);
+    weights[i] = Number.isFinite(x) ? Math.min(99, Math.max(0, x)) : 0;
+    render();
+    $("w" + i).focus();
+  }));
+
+  const run = kruskal(n, weights, picks);
+  const m = run.steps.length;
+  $("step").max = m;
+  const v = Math.min(+$("step").value, m);
+  $("step").value = v;
+  $("prev").disabled = v === 0; $("next").disabled = v === m;
+  renderGraph(v, run);
+
+  const sofar = run.chosen.slice(0, v).reduce((s, i) => s + weights[i], 0);
+  $("stepinfo").innerHTML = `<p class="note">${v === 0 ? "Рёбер ещё нет: все " + n + " вершин взяты, множество рёбер пусто" : `Выбрано рёбер ${v} из ${m}: ${run.chosen.slice(0, v).map((i) => edgeText(edges[i])).join(", ")}. Вес выбранного ${sofar}`}</p>`;
+
+  const rows = run.steps.map((s) => {
+    const cands = s.candidates.map((i) => `<button type="button" class="cand${i === s.chosen ? " pick" : ""}" id="pick-${s.k}-${i}" aria-pressed="${i === s.chosen}">${edgeText(edges[i])}</button>`).join("");
+    return `<tr class="${s.k === v ? "sel" : s.k > v ? "later" : ""}"><td>${s.k}</td><td>${cands}</td><td>${s.weight}</td><td>${edgeText(edges[s.chosen])}</td></tr>`;
+  }).join("");
+  $("steps").innerHTML = `<table class="compact"><tr><th>Шаг</th><th>Допустимые рёбра наименьшего веса</th><th>Вес</th><th>Выбрано</th></tr>${rows}</table>`;
+  run.steps.forEach((s) => s.candidates.forEach((i) => $(`pick-${s.k}-${i}`).addEventListener("click", () => {
+    picks = run.steps.map((t) => t.chosen);
+    picks[s.k - 1] = i;
+    render();
+  })));
+
+  const t = spanningTrees(n, weights);
+  const mine = run.chosen.slice().sort((p, q) => p - q).join(",");
+  const isMin = t.best.some((x) => x.join(",") === mine);
+  const shown = t.best.slice(0, 12).map((x) => x.map((i) => edgeText(edges[i])).join(" ")).join("<br>");
+  $("result").innerHTML = `<div class="formula"><b>Вес остова</b> = ${run.weight}, рёбер ${m} = n − 1<br>Кратчайших остовных деревьев: <b>${t.best.length}</b> из ${t.total} всех (n<sup>n−2</sup>), наименьший вес ${t.min}</div>
+    <p class="check">${run.weight === t.min && isMin ? "Проверка перебором всех остовов: построенное дерево кратчайшее" : "ОШИБКА: дерево алгоритма не кратчайшее"}</p>
+    <details><summary>Все кратчайшие остовы${t.best.length > 12 ? " (первые 12)" : ""}</summary><div class="formula">${shown}</div></details>`;
+}
+
+$("n").addEventListener("input", () => {
+  n = +$("n").value; picks = [];
+  weights = completeEdges(n).map((_, i) => weights[i] ?? 1);
+  $("step").value = 0;
+  render();
+});
+$("preset").addEventListener("input", () => {
+  if (!$("preset").value) return;
+  loadPreset($("preset").value); $("preset").value = ""; $("step").value = 0;
+  render();
+});
+$("step").addEventListener("input", render);
+$("prev").addEventListener("click", () => { $("step").value = +$("step").value - 1; render(); });
+$("next").addEventListener("click", () => { $("step").value = +$("step").value + 1; render(); });
+
+loadPreset("note");
+render();
+</script>
+</body>
+</html>

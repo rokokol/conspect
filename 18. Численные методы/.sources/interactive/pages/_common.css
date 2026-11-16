@@ -1,0 +1,11 @@
+/* Roles shared by the numerical methods pages, over sandbox_kit's page.css: no hex here. */
+.wrap { grid-template-columns: 320px minmax(0, 1fr); }
+@media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+h2 { margin: 0 0 8px; border: 0; padding: 0; }
+.panel h2 { margin: 0; }
+.main td, .main th { text-align: right; }
+.main td:first-child, .main th:first-child { text-align: left; }
+.ctl input[type=text] { width: 76px; text-align: right; }
+.scroll { overflow: auto; max-height: 340px; }
+.scroll thead th { position: sticky; top: 0; background: var(--surface); }
+.xs { width: 100%; }

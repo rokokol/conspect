@@ -1,0 +1,23 @@
+{
+ "figures": {
+  "01. Математический анализ": ["~/.cache/ml-trainings-digitization/.venv/bin/python"],
+  "02. Математическое моделирование": ["~/.cache/diffury-digitization/.venv/bin/python"],
+  "03. Математическая физика": ["~/.cache/diffury-digitization/.venv/bin/python"],
+  "04. Дискретная математика": ["~/.cache/discrete-math-digitization/.venv/bin/python"],
+  "05. Линейная алгебра": ["~/.cache/diffury-digitization/.venv/bin/python"],
+  "06. Биология поведения": ["~/.cache/ml-trainings-digitization/.venv/bin/python"],
+  "08. Дифференциальные уравнения": ["~/.cache/diffury-digitization/.venv/bin/python"],
+  "09. Физика": ["nix", "shell", "--impure", "--expr", "with import <nixpkgs> {}; [(python3.withPackages(ps: [ps.matplotlib ps.numpy ps.scipy ps.fonttools])) poppler-utils]", "-c", "python3"],
+  "13. Машинное обучение/Тренировки по ML": ["~/.cache/ml-trainings-digitization/.venv/bin/python"],
+  "16. Компьютерные сети": ["~/.cache/ml-trainings-digitization/.venv/bin/python"],
+  "17. Архитектура компьютеров": ["~/.cache/ml-trainings-digitization/.venv/bin/python"],
+  "18. Численные методы": ["~/.cache/diffury-digitization/.venv/bin/python"]
+ },
+ "figures_shared": ["Scripts/ddlc_figures"],
+ "pages": {
+  "python": ["~/.cache/discrete-math-digitization/.venv/bin/python"],
+  "glob": "**/*песочница*.html",
+  "steps": ["dark", "width:390"],
+  "shared": ["Scripts/ddlc_figures/ddlc_numbers.py", "Scripts/sandbox_kit/browser.py", ".agents/skills/conspect/SKILL.md"]
+ }
+}

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница булевых функций</title>
+<style>
+/*COMMON_CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница булевых функций</h1>
+  <p class="lead">Задай функцию от n ≤ 4 переменных таблицей истинности или формулой. Ниже: СДНФ и СКНФ, быстрый алгоритм построения полинома Жегалкина по шагам и проверка пяти замкнутых классов, где для каждого "не лежит" показан набор, который это доказывает</p>
+  <div class="wrap">
+    <div class="panel">
+      <div class="sec">
+        <h2>Функция</h2>
+        <label>Число переменных n
+          <select id="n"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option></select>
+        </label>
+        <label>Формула
+          <input id="formula" type="text" spellcheck="false" autocomplete="off" placeholder="x1 &amp; x2 | !x3">
+        </label>
+        <p id="ferr" class="err" role="status"></p>
+        <label>Готовая функция
+          <select id="preset">
+            <option value="">выбрать…</option>
+            <option value="2|x1 & x2">конъюнкция</option>
+            <option value="2|x1 | x2">дизъюнкция</option>
+            <option value="2|x1 ^ x2">сумма по модулю 2</option>
+            <option value="2|x1 -> x2">импликация</option>
+            <option value="2|x1 <-> x2">эквиваленция</option>
+            <option value="1|!x1">отрицание</option>
+            <option value="3|x1&x2 | x1&x3 | x2&x3">мажоритарная</option>
+            <option value="3|(x1 -> x2) & (x2 -> x3)">цепочка импликаций</option>
+            <option value="4|x1&x2 ^ x3&x4">x₁x₂ ⊕ x₃x₄</option>
+          </select>
+        </label>
+        <p class="note">Знаки: ! ¬ отрицание, &amp; ∧ конъюнкция, ^ ⊕ сумма по модулю 2, | ∨ дизъюнкция, -> → импликация, &lt;-> ≡ эквиваленция; переменные x1…x4 или x y z w. Таблицу можно править щелчком по значению</p>
+      </div>
+      <div class="sec">
+        <h2>Таблица истинности</h2>
+        <div id="tt"></div>
+      </div>
+    </div>
+    <div class="main">
+      <section>
+        <h2>СДНФ и СКНФ</h2>
+        <div id="forms"></div>
+      </section>
+      <section>
+        <h2>Быстрый алгоритм полинома Жегалкина</h2>
+        <div class="ctl">
+          <button id="prev" aria-label="Шаг назад">←</button>
+          <input id="step" type="range" min="0" max="3" value="0" aria-label="Шаг алгоритма">
+          <button id="next" aria-label="Шаг вперёд">→</button>
+        </div>
+        <div id="detail"></div>
+        <div id="trace"></div>
+        <div id="poly"></div>
+      </section>
+      <section>
+        <h2>Замкнутые классы</h2>
+        <div id="classes"></div>
+        <p class="note">Щелчок по строке подсвечивает в таблице истинности наборы свидетеля</p>
+      </section>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*DMCORE*/
+let n = 3;
+let vec = [];
+let selClass = null;
+
+const tupleText = (i) => "(" + bits(i, n).join(",") + ")";
+const cut = (b) => b.join("");
+
+function setFormula(text, nVars) {
+  // Returns true when the formula was accepted and the table now follows it.
+  try {
+    const v = formulaVector(text, nVars);
+    vec = v;
+    $("formula").removeAttribute("aria-invalid"); $("ferr").className = "err"; $("ferr").textContent = "";
+    return true;
+  } catch (e) {
+    if (!(e instanceof FormulaError)) throw e;
+    $("formula").setAttribute("aria-invalid", "true");
+    $("ferr").className = "err";
+    $("ferr").textContent = `${e.message} (позиция ${e.pos + 1})`;
+    return false;
+  }
+}
+
+function renderTable() {
+  const head = Array.from({ length: n }, (_, k) => `<th>x${sub(k + 1)}</th>`).join("") + "<th>f</th>";
+  const hl = selClass ? witnessRows(selClass) : [];
+  const rows = vec.map((v, i) => `<tr id="row${i}"${hl.includes(i) ? ' class="hl"' : ""}>${bits(i, n).map((b) => `<td>${b}</td>`).join("")}<td><button type="button" class="bit${v ? " one" : ""}" id="cell${i}" aria-label="f${esc(tupleText(i))} = ${v}, переключить">${v}</button></td></tr>`).join("");
+  $("tt").innerHTML = `<table class="compact"><tr>${head}</tr>${rows}</table>`;
+  vec.forEach((_, i) => $("cell" + i).addEventListener("click", () => {
+    vec[i] ^= 1;
+    $("formula").value = ""; $("formula").removeAttribute("aria-invalid");
+    $("ferr").className = "err info";
+    $("ferr").textContent = "таблица правлена вручную, формулы у неё нет";
+    render();
+  }));
+}
+
+function termsHtml(terms, outer, inner, empty) {
+  if (!terms.length) return `<span class="none">${empty}</span>`;
+  return terms.map((t) => `<span class="term" title="набор ${esc(tupleText(t.index))}">${esc(termText(t, inner))}</span>`).join(` ${outer} `);
+}
+
+function renderForms() {
+  const d = sdnf(vec, n), k = sknf(vec, n);
+  $("forms").innerHTML =
+    `<div class="formula"><b>СДНФ</b> (${d.length} из ${vec.length} наборов, где f = 1)<br>${termsHtml(d, "∨", "", "нет: f ≡ 0, единиц нет")}</div>` +
+    `<div class="formula" style="margin-top:8px"><b>СКНФ</b> (${k.length} из ${vec.length} наборов, где f = 0)<br>${termsHtml(k, "∧", " ∨ ", "нет: f ≡ 1, нулей нет")}</div>`;
+}
+
+const blocksHtml = (blocks) => blocks.map((b) => `<span class="blk">${cut(b)}</span>`).join(" ");
+
+function renderAlgorithm() {
+  const levels = zhegalkinLevels(vec);
+  $("step").max = n;
+  const s = Math.min(+$("step").value, n);
+  $("step").value = s;
+  $("prev").disabled = s === 0; $("next").disabled = s === n;
+  let detail;
+  if (s === 0) {
+    detail = `<div class="vec"><span class="label">вектор f</span>${blocksHtml(levels[0])}</div>
+      <p class="note">Шаг 0: вектор функции, блоки длины 1. Каждый следующий шаг сливает соседние блоки (c, d) в один блок (c, c ⊕ d) вдвое длиннее</p>`;
+  } else {
+    const prev = levels[s - 1], cur = levels[s], half = 1 << (s - 1);
+    const was = [], now = [];
+    for (let j = 0; j < cur.length; j++) {
+      was.push(`<span class="pair"><span class="blk">${cut(prev[2 * j])}</span><span class="blk old2">${cut(prev[2 * j + 1])}</span></span>`);
+      now.push(`<span class="pair"><span class="blk">${cut(cur[j].slice(0, half))}</span><span class="blk new">${cut(cur[j].slice(half))}</span></span>`);
+    }
+    detail = `<div class="vec"><span class="label">было (c, d)</span>${was.join(" ")}</div>
+      <div class="vec"><span class="label">стало (c, c⊕d)</span>${now.join(" ")}</div>
+      <p class="note">Шаг ${s}: блоки длины ${half} объединены в блоки длины ${2 * half}. Цветом выделена вторая половина, c ⊕ d</p>`;
+  }
+  $("detail").innerHTML = detail;
+  $("trace").innerHTML = `<table class="compact"><tr><th>Шаг</th><th>Блоки</th></tr>${levels.map((bl, k) => `<tr class="${k === s ? "sel" : ""}"><td>${k}</td><td>${blocksHtml(bl)}</td></tr>`).join("")}</table>`;
+
+  const p = levels[levels.length - 1][0];
+  const monos = polynomial(p, n);
+  const ok = vec.every((v, i) => evalPolynomial(p, n, bits(i, n)) === v);
+  const rows = monos.map((m) => `<tr><td>${m.index}</td><td>${bits(m.index, n).join("")}</td><td>${esc(monomialText(m.vars))}</td></tr>`).join("");
+  $("poly").innerHTML = `<div class="formula"><b>f</b> = ${esc(polynomialText(monos))}<br><span class="check">вектор полинома ${cut(p)}, степень ${degree(monos)}</span></div>
+    ${monos.length ? `<table class="compact"><tr><th>i</th><th>двоично</th><th>Kᵢ</th></tr>${rows}</table>` : ""}
+    <p class="check">${ok ? "Проверка: полином даёт те же значения, что таблица, на всех " + vec.length + " наборах" : "ОШИБКА: полином не совпал с таблицей"}</p>`;
+}
+
+const CLASS_TITLES = { T0: "T₀", T1: "T₁", L: "L", S: "S", M: "M" };
+
+function witnessRows(name) {
+  const w = classes(vec, n)[name].witness;
+  if (!w) return [];
+  if (name === "L") return [];            // the witness of L is a monomial, not a tuple
+  return name === "T0" || name === "T1" ? [w.alpha] : [w.alpha, w.beta];
+}
+
+function explain(name, c) {
+  const w = c.witness, f = (i) => `f${tupleText(i)} = ${vec[i]}`;
+  if (name === "T0") return c.inClass ? `f${tupleText(0)} = 0` : `${f(w.alpha)}, а надо 0`;
+  if (name === "T1") return c.inClass ? `f${tupleText((1 << n) - 1)} = 1` : `${f(w.alpha)}, а надо 1`;
+  if (name === "S") {
+    return c.inClass ? "на каждой паре противоположных наборов значения разные"
+      : `на противоположных наборах ${tupleText(w.alpha)} и ${tupleText(w.beta)} значения равны: ${f(w.alpha)}, ${f(w.beta)}`;
+  }
+  if (name === "M") {
+    return c.inClass ? "ни на какой паре α ≤ β не бывает f(α) = 1 при f(β) = 0"
+      : `${tupleText(w.alpha)} ≤ ${tupleText(w.beta)}, но ${f(w.alpha)} больше, чем ${f(w.beta)}`;
+  }
+  const monos = polynomial(zhegalkinVector(vec), n);
+  const deg = degree(monos);
+  return c.inClass ? `степень полинома ${deg}, произведений длины 2 и больше нет`
+    : `в полиноме есть ${monos.filter((m) => m.vars.length >= 2).map((m) => monomialText(m.vars)).join(", ")}: степень ${deg}`;
+}
+
+function renderClasses() {
+  const res = classes(vec, n);
+  $("classes").innerHTML = `<table><tr><th>Класс</th><th>Вердикт</th><th>Почему</th></tr>${CLASS_NAMES.map((name) => {
+    const c = res[name];
+    return `<tr class="cls${selClass === name ? " sel" : ""}" id="cls-${name}" tabindex="0" role="button"><td>${CLASS_TITLES[name]}</td><td class="verdict ${c.inClass ? "in" : "out"}">${c.inClass ? "✓ лежит" : "✗ не лежит"}</td><td class="why">${esc(explain(name, c))}</td></tr>`;
+  }).join("")}</table>`;
+  for (const name of CLASS_NAMES) {
+    const row = $("cls-" + name);
+    const pick = () => { selClass = selClass === name ? null : name; renderTable(); renderClasses(); };
+    row.addEventListener("click", pick);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+  }
+}
+
+function render() {
+  $("n").value = n;
+  renderTable(); renderForms(); renderAlgorithm(); renderClasses();
+}
+
+// A new n re-reads the formula; a formula that needs more variables leaves a zero table and says why.
+$("n").addEventListener("input", () => {
+  n = +$("n").value;
+  const text = $("formula").value.trim();
+  if (!text || !setFormula(text, n)) vec = new Array(1 << n).fill(0);
+  if (!text) { $("formula").removeAttribute("aria-invalid"); $("ferr").textContent = ""; }
+  render();
+});
+// A formula with an error leaves the table as it was.
+$("formula").addEventListener("input", () => {
+  const text = $("formula").value.trim();
+  if (!text) { $("formula").removeAttribute("aria-invalid"); $("ferr").textContent = ""; return; }
+  setFormula(text, n);
+  render();
+});
+$("preset").addEventListener("input", () => {
+  const v = $("preset").value;
+  if (!v) return;
+  const [k, text] = v.split("|");
+  n = +k; $("formula").value = text; selClass = null;
+  setFormula(text, n);
+  render();
+  $("preset").value = "";
+});
+$("step").addEventListener("input", renderAlgorithm);
+$("prev").addEventListener("click", () => { $("step").value = +$("step").value - 1; renderAlgorithm(); });
+$("next").addEventListener("click", () => { $("step").value = +$("step").value + 1; renderAlgorithm(); });
+
+$("formula").value = "x1&x2 | x1&x3 | x2&x3";
+setFormula($("formula").value, n);
+render();
+</script>
+</body>
+</html>

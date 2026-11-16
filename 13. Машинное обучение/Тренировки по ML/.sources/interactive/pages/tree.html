@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница решающего дерева</title>
+<style>
+/*COMMON_CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница решающего дерева</h1>
+  <p class="lead">Дерево CART с критерием Джини, как DecisionTreeClassifier в sklearn. Каждое разбиение — порог по одному признаку, поэтому зоны — прямоугольники. Фон — доля классов в листе</p>
+  <div class="wrap">
+    <canvas id="cv" class="square" width="640" height="640" aria-label="Зоны решающего дерева"></canvas>
+    <div class="panel">
+      <label>Данные
+        <select id="ds">
+          <option value="moons">Две луны</option>
+          <option value="circles">Кольца</option>
+          <option value="xor">XOR</option>
+          <option value="linear">Почти линейно разделимые</option>
+          <option value="blobs3">Три облака</option>
+        </select>
+      </label>
+      <label>Максимальная глубина: <b id="dv"></b>
+        <input id="depth" type="range" min="1" max="15" value="3">
+      </label>
+      <label>Минимум объектов в листе: <b id="lv"></b>
+        <input id="leaf" type="range" min="1" max="40" value="1">
+      </label>
+      <div class="row"><input id="showTest" type="checkbox" checked><span>Показывать тест</span></div>
+      <div class="score" id="score"></div>
+      <p class="note">Глубокое дерево без ограничений выделяет каждому шумному объекту свой прямоугольник: train → 1. Ограничение глубины или размера листа — главная защита дерева от переобучения</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+const cv = $("cv"), ctx = cv.getContext("2d");
+
+function leaves(t) { return t.left ? leaves(t.left) + leaves(t.right) : 1; }
+function depthOf(t) { return t.left ? 1 + Math.max(depthOf(t.left), depthOf(t.right)) : 0; }
+
+function draw() {
+  const d = DATA[$("ds").value], maxDepth = +$("depth").value, minLeaf = +$("leaf").value;
+  $("dv").textContent = maxDepth; $("lv").textContent = minLeaf;
+  const t = fitTree(d.Xtr, d.ytr, { maxDepth, minLeaf });
+  const classes = [...new Set(d.ytr)].sort((a, b) => a - b);
+  const proba = (x) => treeProba(t, x);
+  drawClassifier(ctx, dataView(cv, d), d, proba, classes, { showTest: $("showTest").checked, N: 128 });
+  const predict = argmaxClass(proba, classes);
+  $("score").innerHTML =
+    `<span>Точность на обучении</span><span>${toComma(accuracy(d.Xtr.map(predict), d.ytr), 3)}</span>` +
+    `<span>Точность на тесте</span><span>${toComma(accuracy(d.Xte.map(predict), d.yte), 3)}</span>` +
+    `<span>Листьев</span><span>${leaves(t)}</span>` +
+    `<span>Фактическая глубина</span><span>${depthOf(t)}</span>`;
+}
+
+["ds", "depth", "leaf", "showTest"].forEach((id) => $(id).addEventListener("input", draw));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница бэггинга</title>
+<style>
+/*COMMON_CSS*/
+.plots { display: grid; gap: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Песочница бэггинга</h1>
+  <p class="lead">Регрессия зашумлённого синуса: 40 точек, шум 0,25. Бэггинг — среднее N деревьев, каждое обучено на своей бутстреп-выборке (40 объектов с возвращением). Серым показаны отдельные деревья, жирной линией их среднее. Внизу — разброс прогноза по <span class="nsets"></span> свежим обучающим выборкам: он падает с ростом N, но не ниже ρσ²</p>
+  <div class="wrap">
+    <div class="plots">
+      <canvas id="fit" width="640" height="360" aria-label="Деревья и их среднее"></canvas>
+      <canvas id="boot" width="640" height="110" aria-label="Бутстреп-выборка первого дерева"></canvas>
+      <canvas id="var" width="640" height="340" aria-label="Дисперсия среднего от числа деревьев"></canvas>
+    </div>
+    <div class="panel">
+      <label>Число деревьев N = <b id="nv"></b>
+        <input id="n" type="range" min="1" max="40" value="20">
+      </label>
+      <label>Дерево k = <b id="kv"></b> из N — его бутстреп-выборка
+        <input id="k" type="range" min="1" max="20" value="1">
+      </label>
+      <div class="row"><button id="kprev" aria-label="Предыдущее дерево">◀</button><button id="knext" aria-label="Следующее дерево">▶</button></div>
+      <label>Глубина дерева: <b id="dv"></b>
+        <input id="depth" type="range" min="1" max="10" value="10">
+      </label>
+      <div class="row"><input id="boots" type="checkbox" checked><span>Бутстреп (без него все деревья одинаковы)</span></div>
+      <button id="newset">Другая обучающая выборка</button>
+      <div class="legend"><span><i style="background:var(--model)"></i>среднее N деревьев</span><span><i style="background:var(--model-2)"></i>дерево k</span><span><i style="background:var(--text-2)"></i>остальные деревья</span><span><i style="background:var(--train)"></i>точки; полые — не попали в бутстреп дерева k</span></div>
+      <div id="tbl"></div>
+      <p class="note">Крайняя правая глубина — деревья без ограничения: каждое повторяет шум, а их среднее гладкое. У дерева глубины 1 разброс невелик, а смещение велико: среднее остаётся грубой ступенькой, потому что бэггинг гасит только разброс, а не смещение</p>
+      <p class="note">Нижний график — не про выборку сверху. Разброс прогноза показывает, насколько изменился бы ответ при других данных, и по одной выборке его не увидеть. Поэтому страница генерирует ещё <span class="nsets"></span> обучающих выборок по 40 точек того же зашумлённого синуса, на каждой строит бэггинг из 40 деревьев и смотрит, как прогнозы скачут в 40 точках оси x</p>
+      <p class="note">Точки — дисперсия среднего первых N деревьев. Кривая — те же деревья, сжатые до двух чисел: σ² (дисперсия одного дерева) и ρ (корреляция двух) в формуле ρσ² + (1 − ρ)σ²/N</p>
+      <p class="note">Это не проверка формулы: деревья бэггинга одинаково распределены, и для них она верна точно в ожидании. При N = 40 кривая и точки совпадают по построению, при малых N расходятся только из-за шума оценки. Смысл графика — как быстро падает разброс и где у него пол ρσ²; сравни глубины и выключенный бутстреп</p>
+    </div>
+  </div>
+</main>
+<script>
+/*COMMON_JS*/
+/*MLCORE*/
+/*DATA*/
+// 60 samples keep the points smooth (noise near ±0.003) at ~0.12 s per setting.
+const NMAX = 40, NSETS = 60, XS = Array.from({ length: 40 }, (_, i) => (i + 0.5) / 40);
+let seed = 1;
+const fitCache = new Map(), varCache = new Map();
+
+const depthOf = () => (+$("depth").value >= 10 ? Infinity : +$("depth").value);
+
+// Trees of one training sample, each on its own bootstrap sample (or on all of it).
+function bag(sample, depth, boot, seed0) {
+  const r = rng(seed0), X = sample.x.map((v) => [v]), m = X.length, trees = [], counts = [];
+  for (let t = 0; t < NMAX; t++) {
+    const idx = boot ? bootstrapIdx(m, r) : Array.from({ length: m }, (_, i) => i);
+    const c = new Array(m).fill(0);
+    idx.forEach((i) => c[i]++);
+    trees.push(fitRegTree(idx.map((i) => X[i]), idx.map((i) => sample.y[i]), { maxDepth: depth }));
+    counts.push(c);
+  }
+  return { trees, counts };
+}
+
+function shown() {
+  const key = [seed, depthOf(), $("boots").checked].join();
+  if (!fitCache.has(key)) {
+    const sample = makeSine(40, 0.25, seed);
+    fitCache.set(key, { sample, ...bag(sample, depthOf(), $("boots").checked, 1000 + seed) });
+  }
+  return fitCache.get(key);
+}
+
+// The variance of the mean of n trees is exactly the sum of their covariance
+// matrix over n^2. Bagged trees are exchangeable, so in expectation every
+// variance is sigma2 and every covariance rho*sigma2, and the formula holds
+// exactly: there is nothing to test. The curve is the same trees' covariance
+// matrix summarised by two numbers; it meets the points at N = NMAX by
+// construction and differs from them at small N only by estimation noise.
+function groupStats(seed0) {
+  const runs = Array.from({ length: NSETS }, (_, s) => {
+    const sample = makeSine(40, 0.25, seed0 + s);
+    return bag(sample, depthOf(), $("boots").checked, seed0 + 400 + s).trees;
+  });
+  return ensembleStats(XS.map((x) => runs.map((trees) => trees.map((t) => regTreePredict(t, [x])))));
+}
+function variance() {
+  const key = [depthOf(), $("boots").checked].join();
+  if (!varCache.has(key)) {
+    varCache.set(key, groupStats(500));
+  }
+  return varCache.get(key);
+}
+
+function drawFit(S, N, k) {
+  const cv = $("fit"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const f = frame(cv, [-0.02, 1.02], [-2, 2]);
+  axes(cx, f, { xticks: [0, 0.5, 1], yticks: [-2, -1, 0, 1, 2], fmt: (t) => toComma(t, null), xlabel: "x", ylabel: "y" });
+  cx.save(); cx.beginPath(); cx.rect(f.ml, f.mt, f.W, f.H); cx.clip();
+  const gx = Array.from({ length: 200 }, (_, i) => -0.02 + (1.04 * i) / 199);
+  polyline(cx, gx.map((x) => [f.px(x), f.py(Math.sin(2 * Math.PI * x))]), css("--text-2"), 1.5, [5, 4]);
+  for (let t = 0; t < Math.min(N, 20); t++) {
+    if (t === k) continue;
+    cx.globalAlpha = 0.35;
+    polyline(cx, gx.map((x) => [f.px(x), f.py(regTreePredict(S.trees[t], [x]))]), css("--text-2"), 1);
+  }
+  cx.globalAlpha = 1;
+  polyline(cx, gx.map((x) => [f.px(x), f.py(regTreePredict(S.trees[k], [x]))]), css("--model-2"), 2);
+  polyline(cx, gx.map((x) => [f.px(x), f.py(avg(S, N, x))]), css("--model"), 3);
+  cx.restore();
+  // Points outside tree k's bootstrap sample are hollow: that tree never saw them.
+  const c = S.counts[k];
+  S.sample.x.forEach((x, i) => dot(cx, f.px(x), f.py(S.sample.y[i]), css("--train"), { hollow: c[i] === 0 }));
+}
+const avg = (S, N, x) => { let s = 0; for (let t = 0; t < N; t++) s += regTreePredict(S.trees[t], [x]); return s / N; };
+
+function drawBoot(S, k) {
+  const cv = $("boot"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  const c = S.counts[k], m = c.length;
+  cx.fillStyle = css("--text"); cx.font = font(12); cx.textAlign = "left"; cx.textBaseline = "top";
+  const distinct = c.filter((v) => v > 0).length;
+  cx.fillText(`дерево ${k + 1}: ${distinct} разных из ${m} объектов (${Math.round((100 * distinct) / m)} %); число — сколько раз вытащен`, 8, 6);
+  const w = (cv.width - 16) / m;
+  c.forEach((v, i) => {
+    const x = 8 + i * w;
+    cx.strokeStyle = css("--grid"); cx.strokeRect(x + 1, 30, w - 2, 28);
+    if (v > 0) { cx.fillStyle = css("--train"); cx.globalAlpha = Math.min(1, 0.25 + 0.25 * v); cx.fillRect(x + 1, 30, w - 2, 28); cx.globalAlpha = 1; }
+    cx.fillStyle = css(v > 0 ? "--text" : "--text-2"); cx.font = font(10); cx.textAlign = "center"; cx.textBaseline = "middle";
+    cx.fillText(v > 0 ? String(v) : "·", x + w / 2, 44);
+  });
+  const mean = S.counts.reduce((s, cc) => s + cc.filter((v) => v > 0).length / m, 0) / S.counts.length;
+  cx.fillStyle = css("--text-2"); cx.font = font(12); cx.textAlign = "left"; cx.textBaseline = "top";
+  cx.fillText(`в среднем по ${S.counts.length} деревьям разных объектов ${toComma(100 * mean, 0)} %, предел 1 − 1/e ≈ 63 %`, 8, 72);
+}
+
+function drawVar(V, N) {
+  const cv = $("var"), cx = cv.getContext("2d");
+  cx.clearRect(0, 0, cv.width, cv.height);
+  // The measurement comes from other samples and may exceed the estimated sigma2.
+  const top = Math.max(V.sigma2, ...V.varMean) * 1.1 || 1;
+  const f = frame(cv, [0.5, NMAX + 0.5], [0, top], { margin: [52, 28, 136, 42] });
+  axes(cx, f, { xticks: [1, 10, 20, 30, 40], yticks: [0, top / 2, top], yfmt: (t) => num(t, 2), xlabel: "число деревьев N", ylabel: "дисперсия прогноза по обучающим выборкам" });
+  const ns = Array.from({ length: NMAX }, (_, i) => i + 1);
+  const look = { meas: { col: "--text", w: 2.5, dash: [] }, form: { col: "--model", w: 2.5, dash: [] }, floor: { col: "--text-2", w: 1.5, dash: [5, 4] } };
+  polyline(cx, ns.map((n) => [f.px(n), f.py(ensembleVariance(V.rho, V.sigma2, n))]), css(look.form.col), look.form.w);
+  polyline(cx, [[f.px(0.5), f.py(V.rho * V.sigma2)], [f.px(NMAX + 0.5), f.py(V.rho * V.sigma2)]], css(look.floor.col), look.floor.w, look.floor.dash);
+  ns.forEach((n) => dot(cx, f.px(n), f.py(V.varMean[n - 1]), css("--text"), { r: 3 }));
+  cx.strokeStyle = css("--mark"); cx.lineWidth = 1.5; cx.setLineDash([4, 4]);
+  cx.beginPath(); cx.moveTo(f.px(N), f.mt); cx.lineTo(f.px(N), f.mt + f.H); cx.stroke(); cx.setLineDash([]);
+  endLabels(cx, f, [
+    { text: "замер", y: f.py(V.varMean[NMAX - 1]), look: look.meas },
+    { text: "формула", y: f.py(ensembleVariance(V.rho, V.sigma2, NMAX)), look: look.form },
+    { text: "предел ρσ²", y: f.py(V.rho * V.sigma2), look: look.floor },
+  ]);
+}
+
+function draw() {
+  const N = +$("n").value, S = shown(), V = variance();
+  // Tree k is one of the N trees in the ensemble; shrinking N pulls k down with it.
+  $("k").max = N;
+  if (+$("k").value > N) $("k").value = N;
+  const k = +$("k").value - 1;
+  $("nv").textContent = N; $("kv").textContent = k + 1;
+  $("dv").textContent = +$("depth").value >= 10 ? "без ограничения" : $("depth").value;
+  drawFit(S, N, k); drawBoot(S, k); drawVar(V, N);
+  const gx = Array.from({ length: 100 }, (_, i) => (i + 0.5) / 100);
+  const mse = (fn) => gx.reduce((s, x) => s + (fn(x) - Math.sin(2 * Math.PI * x)) ** 2, 0) / gx.length;
+  const one = mse((x) => regTreePredict(S.trees[k], [x])), ens = mse((x) => avg(S, N, x));
+  const row = (a, b) => `<tr><td>${a}</td><td>${b}</td></tr>`;
+  $("tbl").innerHTML = `<table><tr><th></th><th>значение</th></tr>` +
+    row("σ² одного дерева", num(V.sigma2, 3)) + row("корреляция ρ", num(V.rho, 3)) +
+    row("предел ρσ²", num(V.rho * V.sigma2, 3)) + row(`формула при N = ${N}`, num(ensembleVariance(V.rho, V.sigma2, N), 3)) +
+    row(`замер при N = ${N}`, num(V.varMean[N - 1], 3)) +
+    row(`MSE до sin 2πx, дерево ${k + 1}`, num(one, 3)) + row(`MSE до sin 2πx, среднее ${N}`, num(ens, 3)) + `</table>`;
+}
+
+document.querySelectorAll(".nsets").forEach((el) => { el.textContent = NSETS; });
+$("newset").addEventListener("click", () => { seed++; draw(); });
+["n", "k", "depth", "boots"].forEach((id) => $(id).addEventListener("input", draw));
+const stepTree = (d) => { const e = $("k"); e.value = Math.min(+e.max, Math.max(1, +e.value + d)); draw(); };
+$("kprev").addEventListener("click", () => stepTree(-1));
+$("knext").addEventListener("click", () => stepTree(1));
+onTheme(draw);
+draw();
+</script>
+</body>
+</html>
