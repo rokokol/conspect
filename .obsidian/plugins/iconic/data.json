@@ -4545,9 +4545,6 @@
     "Templates": {
       "icon": "lucide-file-text"
     },
-    "docs": {
-      "icon": "lucide-file-code"
-    },
     "index.md": {
       "icon": "lucide-book-open-text"
     },
